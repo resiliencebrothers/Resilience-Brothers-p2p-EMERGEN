@@ -4,7 +4,7 @@ import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { CalendarCheck, Check, X, Clock, User, Wallet, TrendingUp } from "lucide-react";
+import { CalendarCheck, Check, X, Clock, User, Wallet, TrendingUp, Star, MessageSquare, CornerDownRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 // Reservas recibidas por la Empresa (Fase 2). La empresa acepta o rechaza cada
@@ -83,9 +83,9 @@ export default function CompanyBookingsView({ onChanged }) {
       </div>
 
       <div className="border-l-4 border-[#8B5CF6] bg-[#8B5CF6]/5 px-4 py-3 text-sm text-neutral-300" data-testid="company-bookings-note">
-        El cliente ya pagó por adelantado (anticipo o importe completo) y queda <span className="text-[#8B5CF6]">retenido</span>.
-        Acepta para confirmar el turno; recházalo y se le devuelve automáticamente.
-        Si no decides a tiempo, se cancela y reembolsa solo. El pago se te libera
+        El cliente ya pagó el total por adelantado (anticipo + resto <span className="text-sky-300">congelado</span>) y queda <span className="text-[#8B5CF6]">retenido</span>.
+        Acepta para confirmar el turno; recházalo y se le devuelve TODO automáticamente.
+        Si no decides a tiempo, se cancela y reembolsa solo. El importe completo se te libera
         <span className="text-[#8B5CF6]"> después de la fecha de la cita</span>.
       </div>
 
@@ -94,7 +94,7 @@ export default function CompanyBookingsView({ onChanged }) {
           <div className="micro-label text-[#8B5CF6] mb-3 flex items-center gap-1"><Wallet className="w-3.5 h-3.5" /> Ingresos</div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="border border-white/10 p-3">
-              <div className="text-xs text-neutral-400">Anticipos retenidos</div>
+              <div className="text-xs text-neutral-400">Retenido (pendientes)</div>
               <div className="font-display text-2xl text-amber-300" data-testid="earnings-held">{earnings.held_pending} USDT</div>
               <div className="text-[0.7rem] text-neutral-500 mt-1">Reservas pendientes de aceptar</div>
             </div>
@@ -161,7 +161,7 @@ export default function CompanyBookingsView({ onChanged }) {
               </div>
               {b.remainder_usdt > 0 && ["pending", "accepted", "settled"].includes(b.status) && (
                 <div className="text-[0.7rem] text-emerald-300/80 mt-0.5" data-testid={`company-booking-deposit-${b.id}`}>
-                  Anticipo {b.deposit_usdt} USDT · resto {b.remainder_usdt} USDT {b.status === "settled" ? "cobrado tras la cita" : "el día de la cita"}
+                  Anticipo {b.deposit_usdt} USDT · resto {b.remainder_usdt} USDT {b.status === "settled" ? "liberado tras la cita" : "congelado hasta la cita"}
                 </div>
               )}
               {b.note && <div className="text-xs text-neutral-400 mt-1 italic">“{b.note}”</div>}
@@ -187,7 +187,7 @@ export default function CompanyBookingsView({ onChanged }) {
           <DialogHeader><DialogTitle className="font-display">Rechazar reserva</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-neutral-300">
-              Se devolverá al cliente {rejecting?.deposit_usdt > 0 ? `${rejecting.deposit_usdt} USDT` : "el importe"}. Puedes indicar un motivo (opcional).
+              Se devolverá al cliente {rejecting?.amount_usdt > 0 ? `${rejecting.amount_usdt} USDT (anticipo + resto congelado)` : "el importe"}. Puedes indicar un motivo (opcional).
             </p>
             <Textarea data-testid="company-booking-reject-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={3}
               placeholder="Ej: no tenemos disponibilidad ese día" className="rounded-none bg-[#0a0a0a] border-white/10" />
@@ -202,6 +202,93 @@ export default function CompanyBookingsView({ onChanged }) {
           </div>
         </DialogContent>
       </Dialog>
+
+      <CompanyReviews />
+    </div>
+  );
+}
+
+// ---------- Reseñas de clientes: la empresa responde públicamente ----------
+function CompanyReviews() {
+  const [reviews, setReviews] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [savingId, setSavingId] = useState(null);
+
+  const load = useCallback(() => {
+    axios.get(`${API}/company/reviews`, { withCredentials: true })
+      .then((r) => setReviews(r.data || [])).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async (rv) => {
+    const text = (drafts[rv.id] ?? "").trim();
+    if (!text) return;
+    setSavingId(rv.id);
+    try {
+      await axios.post(`${API}/company/reviews/${rv.id}/response`, { response: text },
+        { withCredentials: true });
+      toast.success("Respuesta publicada");
+      setDrafts((d) => { const n = { ...d }; delete n[rv.id]; return n; });
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
+    finally { setSavingId(null); }
+  };
+
+  return (
+    <div data-testid="company-reviews-section">
+      <h3 className="font-display text-xl flex items-center gap-2 mt-2">
+        <MessageSquare className="w-5 h-5 text-[#8B5CF6]" /> Reseñas de clientes
+        {reviews.length > 0 && <span className="text-sm text-neutral-500">· {reviews.length}</span>}
+      </h3>
+      <p className="text-sm text-neutral-400 mt-1 mb-3">Responde públicamente para mostrar atención de calidad.</p>
+
+      {reviews.length === 0 ? (
+        <p className="text-neutral-500 text-center py-10 tactile-card" data-testid="company-reviews-empty">
+          Aún no tienes reseñas. Aparecerán aquí cuando tus clientes valoren un servicio completado.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {reviews.map((rv) => (
+            <div key={rv.id} data-testid={`company-review-${rv.id}`} className="tactile-card p-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-0.5">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <Star key={n} className={`w-3.5 h-3.5 ${n <= Math.round(rv.rating) ? "fill-amber-400 text-amber-400" : "text-neutral-600"}`} />
+                    ))}
+                  </span>
+                  <span className="text-xs text-neutral-300">{rv.customer_name}</span>
+                </div>
+                <span className="text-[0.7rem] text-neutral-500">{rv.service_title}</span>
+              </div>
+              {rv.comment && <p className="text-sm text-neutral-300 mt-1.5 whitespace-pre-line">{rv.comment}</p>}
+
+              {rv.company_response ? (
+                <div className="mt-2.5 ml-3 border-l-2 border-[#8B5CF6]/40 pl-3" data-testid={`company-review-reply-${rv.id}`}>
+                  <div className="text-[0.65rem] uppercase tracking-wider text-[#A78BFA] flex items-center gap-1">
+                    <CornerDownRight className="w-3 h-3" /> Tu respuesta
+                  </div>
+                  <p className="text-sm text-neutral-300 mt-0.5 whitespace-pre-line">{rv.company_response}</p>
+                  <button data-testid={`company-review-edit-${rv.id}`} onClick={() => setDrafts((d) => ({ ...d, [rv.id]: rv.company_response }))}
+                    className="text-[0.7rem] text-neutral-500 hover:text-[#A78BFA] mt-1">Editar respuesta</button>
+                </div>
+              ) : null}
+
+              {(drafts[rv.id] !== undefined || !rv.company_response) && (
+                <div className="mt-2.5 space-y-2">
+                  <Textarea data-testid={`company-review-input-${rv.id}`} rows={2}
+                    value={drafts[rv.id] ?? ""} onChange={(e) => setDrafts((d) => ({ ...d, [rv.id]: e.target.value }))}
+                    placeholder="Escribe una respuesta pública…" className="rounded-none bg-[#0a0a0a] border-white/10" />
+                  <Button data-testid={`company-review-save-${rv.id}`} onClick={() => save(rv)} disabled={savingId === rv.id || !(drafts[rv.id] ?? "").trim()}
+                    className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none h-9">
+                    {savingId === rv.id ? (<><Loader2 className="w-4 h-4 mr-1 animate-spin" /> …</>) : (rv.company_response ? "Guardar cambios" : "Responder")}
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

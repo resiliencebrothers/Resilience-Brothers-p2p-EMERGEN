@@ -325,6 +325,7 @@ async def list_services(
     price_min: Optional[float] = None,
     price_max: Optional[float] = None,
     zone: Optional[str] = None,
+    sort: Optional[str] = None,
 ) -> Any:
     query: dict = {"status": "published", "is_active": True}
     if category:
@@ -358,6 +359,14 @@ async def list_services(
     except Exception as e:  # noqa: BLE001
         logger.error(f"service verified-badge failed: {e}")
     await _attach_next_slots(rows)
+    # Orden: por defecto, más recientes primero. `sort=rating` ordena por mejor
+    # valoración (promedio, luego nº de reseñas); los no valorados quedan al final.
+    if sort == "rating":
+        rows.sort(
+            key=lambda r: (float(r.get("rating_avg") or 0),
+                           int(r.get("rating_count") or 0),
+                           r.get("created_at") or ""),
+            reverse=True)
     return rows
 
 

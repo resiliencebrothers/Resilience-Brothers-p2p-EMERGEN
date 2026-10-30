@@ -69,7 +69,10 @@
       "quoteInfo": "Este servicio es a presupuestar: reservas el turno sin cobro y acuerdas el precio con la empresa.",
       "payNow": "Pagas ahora (anticipo)",
       "restLater": "Resto el día de la cita",
-      "depositInfo": "Pagas solo el anticipo ahora; el resto se cobra automáticamente de tu saldo el día de la cita."
+      "depositInfo": "Pagas solo el anticipo ahora; el resto se cobra automáticamente de tu saldo el día de la cita.",
+      "frozen": "Congelado",
+      "frozenInfo": "Se cobra ahora el anticipo ({{deposit}} USDT) y se congela el resto ({{frozen}} USDT). Si cancelas antes de la cita, te devolvemos todo.",
+      "needFull": "Necesitas {{amount}} USDT disponibles para reservar."
     },
     "mine": {
       "none": "Aún no tienes reservas. Explora los servicios y reserva tu primer turno.",
@@ -78,7 +81,7 @@
       "cancelConfirm": "¿Cancelar esta reserva? Se te devolverá el importe.",
       "cancelled": "Reserva cancelada; se devolvió tu importe.",
       "rejectReason": "Motivo: {{reason}}",
-      "deposit": "Anticipo {{paid}} USDT pagado · resto {{rest}} USDT el día de la cita"
+      "deposit": "Anticipo {{paid}} USDT · {{rest}} USDT congelados (se devuelven si cancelas)"
     },
     "status": {
       "pending": "Pendiente",
@@ -109,7 +112,14 @@
       "submitted": "¡Gracias por tu reseña!",
       "edit": "Editar reseña",
       "placeholder": "¿Cómo fue tu experiencia?",
-      "update": "Actualizar reseña"
+      "update": "Actualizar reseña",
+      "companyReply": "Respuesta de la empresa"
+    },
+    "frozenTotal": "Congelado en reservas activas: {{amount}} USDT",
+    "sort": {
+      "label": "Ordenar",
+      "recent": "Más recientes",
+      "rating": "Mejor valoración"
     }
   },
   "offers": {

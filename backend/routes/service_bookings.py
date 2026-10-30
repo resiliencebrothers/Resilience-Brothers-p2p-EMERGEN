@@ -72,6 +72,11 @@ class ReviewCreate(BaseModel):
     comment: str = Field("", max_length=1000)
 
 
+class ReviewResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    response: str = Field(..., min_length=1, max_length=1000)
+
+
 def _parse(dt_iso: Optional[str]) -> Optional[datetime]:
     if not dt_iso:
         return None
@@ -194,6 +199,7 @@ async def create_booking(payload: BookingCreate, request: Request) -> Any:
         "amount_usdt": amount,
         "deposit_usdt": charge_now,
         "remainder_usdt": remainder,
+        "frozen_full": True,
         "remainder_collected": False,
         "company_paid_usdt": 0.0,
         "currency": _BOOKING_CODE,
@@ -226,20 +232,24 @@ async def create_booking(payload: BookingCreate, request: Request) -> Any:
             status_code=409,
             detail="Ese turno se acaba de ocupar. Elige otro horario.")
 
-    # Cobro al reservar: se descuenta el ANTICIPO (o el total si el servicio no
-    # define anticipo) del saldo USDT del cliente y queda retenido por la
-    # plataforma. El resto, si lo hay, se cobra automáticamente tras la cita.
-    if charge_now > 0:
+    # Cobro al reservar (SALDO CONGELADO): el cliente debe tener disponible el
+    # TOTAL del servicio. Se descuenta el importe COMPLETO del saldo USDT: el
+    # anticipo queda retenido para la empresa y el resto queda CONGELADO. Si la
+    # reserva se cancela/rechaza/expira antes de la cita se devuelve TODO
+    # (anticipo + resto congelado); tras la cita el total se libera a la empresa.
+    if amount > 0:
         res = await debit_balance_idempotent(
-            user["user_id"], _BOOKING_CODE, charge_now, pay_op)
+            user["user_id"], _BOOKING_CODE, amount, pay_op)
         if res == "insufficient":
             await db.service_bookings.delete_one({"id": booking_id})
             raise HTTPException(
                 status_code=400,
-                detail=f"Saldo USDT insuficiente para reservar ({charge_now} USDT).")
+                detail=(f"Saldo USDT insuficiente: necesitas {amount} USDT "
+                        "disponibles para reservar (se cobra el anticipo y se "
+                        "congela el resto, que se devuelve si cancelas)."))
 
-    extra = (f" Pagas ahora {charge_now} USDT; el resto ({remainder} USDT) tras la cita."
-             if remainder > 0 else "")
+    extra = (f" Pagas ahora {charge_now} USDT; el resto ({remainder} USDT) queda "
+             "congelado y se le devuelve si cancela." if remainder > 0 else "")
     await _notify(
         svc["company_id"], ntype="service_booking_new",
         title="Nueva reserva de turno",
@@ -449,6 +459,53 @@ async def my_reviews(request: Request) -> Any:
 
 
 # ============================================================
+# Empresa — respuestas públicas a reseñas de sus servicios
+# ============================================================
+
+@router.get("/company/reviews")
+async def company_reviews(request: Request) -> Any:
+    """Todas las reseñas de los servicios de la empresa (con el título del
+    servicio), para que pueda responderlas públicamente."""
+    user = await require_company(request)
+    svcs = await db.services.find(
+        {"company_id": user["user_id"]}, {"_id": 0, "id": 1, "title": 1}).to_list(500)
+    title_by_id = {s["id"]: s.get("title", "") for s in svcs}
+    if not title_by_id:
+        return []
+    rows = await db.service_reviews.find(
+        {"service_id": {"$in": list(title_by_id)}},
+        {"_id": 0, "customer_id": 0}).sort("created_at", -1).to_list(500)
+    for r in rows:
+        r["service_title"] = title_by_id.get(r.get("service_id"), "")
+    return rows
+
+
+@router.post("/company/reviews/{review_id}/response")
+async def respond_to_review(review_id: str, payload: ReviewResponse,
+                            request: Request) -> Any:
+    """La empresa responde públicamente a una reseña de uno de sus servicios."""
+    user = await require_company(request)
+    rv = await db.service_reviews.find_one({"id": review_id}, {"_id": 0})
+    if not rv:
+        raise HTTPException(status_code=404, detail="Reseña no encontrada.")
+    svc = await db.services.find_one(
+        {"id": rv.get("service_id"), "company_id": user["user_id"]},
+        {"_id": 0, "id": 1})
+    if not svc:
+        raise HTTPException(
+            status_code=403, detail="Esta reseña no pertenece a un servicio tuyo.")
+    now = iso(now_utc())
+    await db.service_reviews.update_one(
+        {"id": review_id},
+        {"$set": {"company_response": payload.response.strip(),
+                  "company_response_at": now,
+                  "company_response_name": user.get("name", ""),
+                  "updated_at": now}})
+    return await db.service_reviews.find_one(
+        {"id": review_id}, {"_id": 0, "customer_id": 0})
+
+
+# ============================================================
 # Empresa — panel de ingresos de reservas
 # ============================================================
 
@@ -465,7 +522,8 @@ async def company_earnings(request: Request) -> Any:
              "status": {"$in": ["pending", "accepted", "settled"]}}, {"_id": 0}):
         st = b["status"]
         if st == "pending":
-            held_pending += float(b.get("deposit_usdt", b.get("amount_usdt", 0)) or 0)
+            held_pending += (float(b.get("amount_usdt", 0) or 0) if b.get("frozen_full")
+                             else float(b.get("deposit_usdt", b.get("amount_usdt", 0)) or 0))
         elif st == "accepted":
             total = float(b.get("amount_usdt", 0) or 0)
             upcoming_release += total
@@ -473,7 +531,8 @@ async def company_earnings(request: Request) -> Any:
                 "id": b["id"], "service_title": b.get("service_title", ""),
                 "slot_date": b.get("slot_date"), "slot_start": b.get("slot_start"),
                 "amount_usdt": total,
-                "already_collected": float(b.get("deposit_usdt", 0) or 0),
+                "already_collected": (total if b.get("frozen_full")
+                                      else float(b.get("deposit_usdt", 0) or 0)),
                 "release_after": b.get("slot_end_utc")})
         elif st == "settled":
             settled_total += float(b.get("company_paid_usdt", b.get("amount_usdt", 0)) or 0)
@@ -492,9 +551,11 @@ async def company_earnings(request: Request) -> Any:
 # ============================================================
 
 async def _refund(doc: dict) -> None:
-    """Devuelve al cliente lo que se le COBRÓ al reservar (el anticipo, o el
-    total si no había anticipo). Idempotente."""
-    amount = round(float(doc.get("deposit_usdt", doc.get("amount_usdt")) or 0), 2)
+    """Devuelve al cliente lo que quedó comprometido al reservar. Modelo de
+    saldo congelado: se devuelve TODO (anticipo + resto congelado). Reservas
+    legadas (sin `frozen_full`) devuelven solo el anticipo que se cobró.
+    Idempotente."""
+    amount = _refund_amount(doc)
     if amount <= 0:
         return
     # Robustez: solo devolvemos si el COBRO llegó a aplicarse. Si una caída
@@ -513,16 +574,39 @@ async def _refund(doc: dict) -> None:
 
 
 def _refund_amount(doc: dict) -> float:
+    """Saldo congelado: se devuelve el TOTAL (anticipo + resto congelado).
+    Reservas legadas (sin `frozen_full`) devuelven solo el anticipo cobrado."""
+    if doc.get("frozen_full"):
+        return round(float(doc.get("amount_usdt") or 0), 2)
     return round(float(doc.get("deposit_usdt", doc.get("amount_usdt")) or 0), 2)
 
 
 async def _settle(doc: dict) -> None:
-    """Liquida una reserva ya cumplida (idempotente):
-      1) cobra el RESTO pendiente del saldo del cliente (si hay anticipo);
-      2) ABONA a la empresa lo realmente cobrado (anticipo + resto recaudado).
-    Simetría del depósito: la empresa solo recibe dinero que se cobró de verdad;
-    si el cliente ya no tiene saldo para el resto, la empresa recibe el anticipo
-    y la reserva queda marcada como resto no recaudado."""
+    """Liquida una reserva ya cumplida (idempotente).
+
+    Modelo de SALDO CONGELADO (`frozen_full`): el TOTAL ya se cobró al reservar
+    (anticipo retenido + resto congelado), así que al cumplirse la cita se
+    LIBERA el total a la empresa sin volver a tocar el saldo del cliente —el
+    resto está garantizado, nunca puede faltar.
+
+    Reservas legadas (sin `frozen_full`): comportamiento anterior — se cobra el
+    resto del saldo del cliente y se abona a la empresa lo realmente cobrado."""
+    if doc.get("frozen_full"):
+        amount = round(float(doc.get("amount_usdt") or 0), 2)
+        pay_op = doc.get("pay_op_id")
+        paid = (not pay_op) or await op_was_applied(doc["customer_id"], pay_op)
+        company_amount = amount if paid else 0.0
+        settle_op = f"svcbk:{doc['id']}:settle"
+        if company_amount > 0:
+            await credit_balance_idempotent(
+                doc["company_id"], doc.get("currency", _BOOKING_CODE),
+                company_amount, settle_op)
+        await db.service_bookings.update_one(
+            {"id": doc["id"]}, {"$set": {"settle_op_id": settle_op,
+                                         "remainder_collected": True,
+                                         "company_paid_usdt": company_amount,
+                                         "updated_at": iso(now_utc())}})
+        return
     deposit = round(float(doc.get("deposit_usdt", doc.get("amount_usdt")) or 0), 2)
     remainder = round(float(doc.get("remainder_usdt") or 0), 2)
     pay_op = doc.get("pay_op_id")

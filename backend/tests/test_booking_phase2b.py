@@ -79,7 +79,7 @@ def _poll(bid, pred, tries=20):
 
 
 def _seed_booking(bid, *, status, amount, deposit, remainder, service_id,
-                  start_offset_h, end_offset_h, reminded=True):
+                  start_offset_h, end_offset_h, reminded=True, frozen_full=False):
     now = datetime.now(timezone.utc)
     start = now + timedelta(hours=start_offset_h)
     end = now + timedelta(hours=end_offset_h)
@@ -92,6 +92,7 @@ def _seed_booking(bid, *, status, amount, deposit, remainder, service_id,
         "accept_deadline_utc": "", "timezone": "America/Havana",
         "pricing_type": "fixed", "unit_price_usdt": amount, "quantity": 1,
         "amount_usdt": amount, "deposit_usdt": deposit, "remainder_usdt": remainder,
+        "frozen_full": frozen_full,
         "remainder_collected": False, "company_paid_usdt": 0.0, "currency": "USDT",
         "status": status, "note": "", "reject_reason": "",
         "pay_op_id": "", "rest_op_id": "", "refund_op_id": "", "settle_op_id": "",
@@ -99,9 +100,10 @@ def _seed_booking(bid, *, status, amount, deposit, remainder, service_id,
         "created_at": now.isoformat(), "updated_at": now.isoformat(), "decided_at": ""})
 
 
-# --- Partial deposit: only the deposit is charged at booking time
-class TestPartialDeposit:
-    def test_percent_deposit_charges_only_deposit(self, vip, service_id):
+# --- Saldo congelado: se cobra el TOTAL al reservar (anticipo + resto
+#     congelado); cancelar devuelve TODO.
+class TestFrozenBalance:
+    def test_percent_deposit_freezes_remainder(self, vip, service_id):
         _set_deposit(service_id, "percent", 30)
         try:
             b0 = _bal(VIP)
@@ -109,21 +111,23 @@ class TestPartialDeposit:
             assert r.status_code == 200, r.text
             bk = r.json()
             assert bk["amount_usdt"] == 10 and bk["deposit_usdt"] == 3 and bk["remainder_usdt"] == 7
-            assert abs(_bal(VIP) - (b0 - 3)) < 1e-6          # only deposit debited
-            # cancelling refunds only what was charged (the deposit)
+            assert bk["frozen_full"] is True
+            assert abs(_bal(VIP) - (b0 - 10)) < 1e-6          # FULL total debited
+            # cancelling before the appointment refunds EVERYTHING (deposit + frozen)
             assert vip.post(f"{BASE}/api/bookings/{bk['id']}/cancel").status_code == 200
             assert abs(_bal(VIP) - b0) < 1e-6
         finally:
             _set_deposit(service_id, "none", 0)
 
-    def test_fixed_deposit_charges_fixed(self, vip, service_id):
+    def test_fixed_deposit_freezes_remainder(self, vip, service_id):
         _set_deposit(service_id, "fixed", 4)
         try:
             b0 = _bal(VIP)
             bk = _book(vip, service_id, _d(5), "10:00", 1).json()
             assert bk["deposit_usdt"] == 4 and bk["remainder_usdt"] == 6
-            assert abs(_bal(VIP) - (b0 - 4)) < 1e-6
+            assert abs(_bal(VIP) - (b0 - 10)) < 1e-6          # FULL total debited
             vip.post(f"{BASE}/api/bookings/{bk['id']}/cancel")
+            assert abs(_bal(VIP) - b0) < 1e-6
         finally:
             _set_deposit(service_id, "none", 0)
 
@@ -134,15 +138,30 @@ class TestPartialDeposit:
         assert abs(_bal(VIP) - (b0 - 10)) < 1e-6
         vip.post(f"{BASE}/api/bookings/{bk['id']}/cancel")
 
+    def test_requires_full_balance_not_just_deposit(self, vip, service_id):
+        """Con un anticipo pequeño pero saldo < total, la reserva se rechaza:
+        siempre debe haber saldo para el total del servicio."""
+        _set_deposit(service_id, "percent", 10)
+        mdb.users.update_one({"user_id": VIP}, {"$set": {"vip_balances.USDT": 5.0}})
+        try:
+            r = _book(vip, service_id, _d(6), "09:00", 1)  # total 10, deposit 1
+            assert r.status_code == 400
+            assert "insuficiente" in (r.json().get("detail") or "").lower()
+        finally:
+            _set_deposit(service_id, "none", 0)
+            mdb.users.update_one({"user_id": VIP}, {"$set": {"vip_balances.USDT": 5000.0}})
 
-# --- Settlement collects the remainder and credits the company the full amount
-class TestSettlementRemainder:
-    def test_remainder_collected_and_company_credited(self, service_id):
+
+# --- Settlement of a FROZEN booking: the full total is released to the company
+#     without charging the customer again (the remainder was frozen at booking).
+class TestFrozenSettlement:
+    def test_frozen_settles_without_recharge(self, service_id):
         mdb.users.update_one({"user_id": VIP}, {"$set": {"vip_balances.USDT": 5000.0}})
         v0, c0 = _bal(VIP), _bal(EMP)
-        bid = "PH2B_SET_" + uuid.uuid4().hex[:6]
+        bid = "PH2B_FRZ_" + uuid.uuid4().hex[:6]
         _seed_booking(bid, status="accepted", amount=100, deposit=30, remainder=70,
-                      service_id=service_id, start_offset_h=-3, end_offset_h=-2)
+                      service_id=service_id, start_offset_h=-3, end_offset_h=-2,
+                      frozen_full=True)
         try:
             r = requests.post(f"{BASE}/api/cron/bookings-tick",
                               headers={"Authorization": f"Bearer {CRON}"})
@@ -151,7 +170,7 @@ class TestSettlementRemainder:
             assert doc["status"] == "settled"
             assert doc["remainder_collected"] is True
             assert doc["company_paid_usdt"] == 100
-            assert abs(_bal(VIP) - (v0 - 70)) < 1e-6    # remainder charged post-cita
+            assert abs(_bal(VIP) - v0) < 1e-6           # customer NOT charged again
             assert abs(_bal(EMP) - (c0 + 100)) < 1e-6   # company gets the full amount
         finally:
             mdb.service_bookings.delete_one({"id": bid})
@@ -218,6 +237,62 @@ class TestEarnings:
             assert data["upcoming_release"] >= 200
         finally:
             mdb.service_bookings.delete_one({"id": bid})
+
+
+# --- Rating sort: services can be ordered by best rating
+class TestRatingSort:
+    def test_sort_rating_returns_sorted_desc(self):
+        r = requests.get(f"{BASE}/api/services", params={"sort": "rating"})
+        assert r.status_code == 200
+        rows = r.json()
+        avgs = [float(x.get("rating_avg") or 0) for x in rows]
+        assert avgs == sorted(avgs, reverse=True)
+
+    def test_default_sort_recent(self):
+        r = requests.get(f"{BASE}/api/services")
+        assert r.status_code == 200 and isinstance(r.json(), list)
+
+
+# --- Company public replies to reviews
+class TestReviewResponse:
+    def test_company_can_reply_and_reply_is_public(self, vip, emp, service_id):
+        bid = "PH2B_RSP_" + uuid.uuid4().hex[:6]
+        _seed_booking(bid, status="settled", amount=10, deposit=10, remainder=0,
+                      service_id=service_id, start_offset_h=-48, end_offset_h=-47)
+        try:
+            rev = vip.post(f"{BASE}/api/services/{service_id}/reviews",
+                           json={"rating": 5, "comment": "Muy bueno"}).json()
+            rid = rev["id"]
+            # company sees the review with the service title
+            lst = emp.get(f"{BASE}/api/company/reviews").json()
+            mine = next((x for x in lst if x["id"] == rid), None)
+            assert mine and mine.get("service_title")
+            # company replies
+            rr = emp.post(f"{BASE}/api/company/reviews/{rid}/response",
+                          json={"response": "¡Gracias por tu confianza!"})
+            assert rr.status_code == 200, rr.text
+            assert rr.json()["company_response"] == "¡Gracias por tu confianza!"
+            assert "customer_id" not in rr.json()
+            # reply is visible on the public reviews list
+            pub = requests.get(f"{BASE}/api/services/{service_id}/reviews").json()
+            got = next((x for x in pub if x["id"] == rid), None)
+            assert got and got["company_response"] == "¡Gracias por tu confianza!"
+            assert got.get("company_response_at")
+        finally:
+            mdb.service_bookings.delete_one({"id": bid})
+            mdb.service_reviews.delete_many({"service_id": service_id, "customer_id": VIP})
+
+    def test_customer_cannot_reply(self, vip, service_id):
+        rid = "nonexistent"
+        r = vip.post(f"{BASE}/api/company/reviews/{rid}/response",
+                     json={"response": "x"})
+        assert r.status_code in (401, 403)
+
+    def test_company_cannot_reply_to_others_review(self, emp, service_id):
+        # a review that does not belong to this company's services -> 404 (not found)
+        r = emp.post(f"{BASE}/api/company/reviews/does-not-exist/response",
+                     json={"response": "x"})
+        assert r.status_code == 404
 
 
 # --- 24h reminder (in-app + email), idempotent

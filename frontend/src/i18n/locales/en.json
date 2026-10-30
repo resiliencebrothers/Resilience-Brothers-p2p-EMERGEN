@@ -69,7 +69,10 @@
       "quoteInfo": "This service is by quote: you book the appointment with no charge and agree the price with the business.",
       "payNow": "Pay now (deposit)",
       "restLater": "Rest on the appointment day",
-      "depositInfo": "You only pay the deposit now; the rest is charged automatically from your balance on the appointment day."
+      "depositInfo": "You only pay the deposit now; the rest is charged automatically from your balance on the appointment day.",
+      "frozen": "Frozen",
+      "frozenInfo": "The deposit ({{deposit}} USDT) is charged now and the rest ({{frozen}} USDT) is frozen. If you cancel before the appointment, we refund everything.",
+      "needFull": "You need {{amount}} USDT available to book."
     },
     "mine": {
       "none": "You have no bookings yet. Browse the services and book your first appointment.",
@@ -78,7 +81,7 @@
       "cancelConfirm": "Cancel this booking? You will be refunded.",
       "cancelled": "Booking cancelled; your amount was refunded.",
       "rejectReason": "Reason: {{reason}}",
-      "deposit": "Deposit {{paid}} USDT paid · {{rest}} USDT due on the appointment day"
+      "deposit": "Deposit {{paid}} USDT · {{rest}} USDT frozen (refunded if you cancel)"
     },
     "status": {
       "pending": "Pending",
@@ -109,7 +112,14 @@
       "submitted": "Thanks for your review!",
       "edit": "Edit review",
       "placeholder": "How was your experience?",
-      "update": "Update review"
+      "update": "Update review",
+      "companyReply": "Company reply"
+    },
+    "frozenTotal": "Frozen in active bookings: {{amount}} USDT",
+    "sort": {
+      "label": "Sort",
+      "recent": "Most recent",
+      "rating": "Top rated"
     }
   },
   "offers": {

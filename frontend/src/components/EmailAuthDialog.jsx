@@ -56,6 +56,10 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   // el aviso de credenciales. Este banner deja claro "email o contraseña
   // incorrectos" dentro del diálogo.
   const [formError, setFormError] = useState("");
+  // Tipo de error en el formulario: "credentials" muestra ayuda de recuperación
+  // (¿olvidaste tu contraseña?); "session" es un fallo de red recuperable.
+  const [formErrorKind, setFormErrorKind] = useState("");
+  const [failCount, setFailCount] = useState(0);
   const [notice, setNotice] = useState(null); // {kind: 'register'|'google', message}
   const [resending, setResending] = useState(false);
   const nameInputRef = useRef(null);
@@ -83,7 +87,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false);
     setName(""); setPhone(""); setRemember24h(false); setLoading(false);
     setSuccessMsg(""); setNotice(null); setMode("login"); setAccountType("personal");
-    setFormError("");
+    setFormError(""); setFormErrorKind(""); setFailCount(0);
     setCaptchaToken(""); setCaptchaKey((k) => k + 1);
   };
 
@@ -144,7 +148,11 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     const text = typeof message === "string" ? message : "Error de autenticación";
     // Aviso INLINE persistente + toast: el usuario ve "email o contraseña
     // incorrectos" dentro del formulario, no solo el widget de Cloudflare.
+    // Además marcamos el error como de credenciales para ofrecer recuperación
+    // (¿olvidaste tu contraseña?) y reforzarla tras varios intentos fallidos.
     setFormError(text);
+    setFormErrorKind("credentials");
+    setFailCount((c) => c + 1);
     toast.error(text);
   };
 
@@ -157,6 +165,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     }
     setLoading(true);
     setFormError("");
+    setFormErrorKind("");
     try {
       if (mode === "forgot") {
         await axios.post(`${API}/auth/forgot-password`, { email: email.trim() });
@@ -194,6 +203,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       if (err?.code === "SESSION_UNCONFIRMED") {
         const msg = "No pudimos confirmar tu sesión. Revisa tu conexión e inténtalo de nuevo.";
         setFormError(msg);
+        setFormErrorKind("session");
         toast.error(msg);
       } else {
         handleAuthError(err);
@@ -251,7 +261,30 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                 className="flex items-start gap-2 text-sm text-red-200 border border-red-500/40 bg-red-500/10 px-3 py-2.5 rounded-none"
               >
                 <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
-                <span>{formError}</span>
+                <div className="min-w-0">
+                  <span>{formError}</span>
+                  {formErrorKind === "credentials" && (
+                    <div className="mt-2 flex flex-col gap-1.5" data-testid="auth-error-help">
+                      <span className="text-xs text-red-200/80">
+                        Revisa que el email y la contraseña sean correctos (ojo a las mayúsculas).
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="auth-error-forgot"
+                        onClick={() => { setFormError(""); setFormErrorKind(""); setMode("forgot"); }}
+                        className="self-start text-xs font-semibold text-amber-300 hover:text-amber-200 underline underline-offset-4"
+                      >
+                        ¿Olvidaste tu contraseña? Restablécela aquí
+                      </button>
+                      {failCount >= 2 && (
+                        <span data-testid="auth-error-repeated" className="text-xs text-amber-200/90">
+                          Llevas {failCount} intentos fallidos. Te recomendamos restablecer tu contraseña
+                          o entrar con Google.
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             <AuthNotice
@@ -382,7 +415,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               <button
                 type="button"
                 data-testid="auth-toggle-mode"
-                onClick={() => { setFormError(""); setMode(mode === "login" ? "register" : "login"); }}
+                onClick={() => { setFormError(""); setFormErrorKind(""); setFailCount(0); setMode(mode === "login" ? "register" : "login"); }}
                 className="text-xs text-neutral-400 hover:text-[#8B5CF6] underline underline-offset-4"
               >
                 {mode === "register"
@@ -396,7 +429,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                   <button
                     type="button"
                     data-testid="auth-forgot-link"
-                    onClick={() => { setFormError(""); setMode("forgot"); }}
+                    onClick={() => { setFormError(""); setFormErrorKind(""); setMode("forgot"); }}
                     className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4"
                   >
                     ¿Olvidaste tu contraseña?

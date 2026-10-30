@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { es as dfEs, enUS as dfEn } from "date-fns/locale";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Wrench, Search, MapPin, Clock, BadgeCheck, CalendarClock, CreditCard, Loader2, CalendarCheck2, Star } from "lucide-react";
+import { Wrench, Search, MapPin, Clock, BadgeCheck, CalendarClock, CreditCard, Loader2, CalendarCheck2, Star, CornerDownRight, Snowflake, ArrowDownWideNarrow } from "lucide-react";
 import { toast } from "sonner";
 
 // Pestaña SERVICIOS del mercado (cliente). Fase 2: reserva de turnos con pago
@@ -59,14 +59,16 @@ export default function ServicesMarketplace({ onBooked }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [modality, setModality] = useState("");
+  const [sort, setSort] = useState("recent");
   const [detail, setDetail] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [balance, setBalance] = useState(0);
 
   const load = useCallback(() => {
-    axios.get(`${API}/services`, { withCredentials: true })
+    axios.get(`${API}/services`, {
+      params: sort === "rating" ? { sort: "rating" } : {}, withCredentials: true })
       .then((r) => setServices(r.data)).catch(() => {});
-  }, []);
+  }, [sort]);
   const loadBookings = useCallback(() => {
     axios.get(`${API}/bookings/mine`, { withCredentials: true })
       .then((r) => setBookings(r.data)).catch(() => {});
@@ -113,6 +115,12 @@ export default function ServicesMarketplace({ onBooked }) {
     (!query.trim() || norm(s.title).includes(norm(query)) ||
       norm(s.description).includes(norm(query)) || norm(s.coverage_zone).includes(norm(query))));
 
+  // Dinero congelado en reservas activas (pendientes/aceptadas): el resto que se
+  // libera a la empresa tras la cita, pero que se devuelve íntegro si se cancela.
+  const frozenTotal = useMemo(() => Math.round(bookings
+    .filter((b) => ["pending", "accepted"].includes(b.status))
+    .reduce((acc, b) => acc + Number(b.remainder_usdt || 0), 0) * 100) / 100, [bookings]);
+
   const afterBooking = () => {
     loadBookings(); loadBalance(); load(); onBooked?.();
   };
@@ -150,7 +158,27 @@ export default function ServicesMarketplace({ onBooked }) {
               <Input data-testid="services-search-input" value={query} onChange={(e) => setQuery(e.target.value)}
                 placeholder={t("svcMarket.searchPlaceholder")} className="rounded-none pl-9 bg-[#0a0a0a] border-white/10 h-10" />
             </div>
+            <div className="flex items-center gap-1 ml-auto" data-testid="services-sort">
+              <ArrowDownWideNarrow className="w-4 h-4 text-neutral-500" />
+              {[["recent", t("svcMarket.sort.recent")], ["rating", t("svcMarket.sort.rating")]].map(([val, label]) => (
+                <button key={val} data-testid={`services-sort-${val}`} onClick={() => setSort(val)}
+                  className={`px-3 py-1.5 text-xs uppercase tracking-wider border transition-colors ${sort === val ? "border-[#8B5CF6] text-[#8B5CF6] bg-[#8B5CF6]/10" : "border-white/10 text-neutral-400 hover:text-white"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
+
+          {(balance > 0 || frozenTotal > 0) && (
+            <div className="flex items-center gap-4 text-xs flex-wrap" data-testid="svc-balance-bar">
+              <span className="text-neutral-400">{t("svcMarket.booking.yourBalance", { amount: balance.toLocaleString(undefined, { maximumFractionDigits: 2 }) })}</span>
+              {frozenTotal > 0 && (
+                <span className="inline-flex items-center gap-1 text-sky-300" data-testid="svc-frozen-total">
+                  <Snowflake className="w-3.5 h-3.5" /> {t("svcMarket.frozenTotal", { amount: frozenTotal.toLocaleString(undefined, { maximumFractionDigits: 2 }) })}
+                </span>
+              )}
+            </div>
+          )}
 
           {usedCategories.length > 0 && (
             <div className="flex gap-2 flex-wrap" data-testid="services-category-chips">
@@ -375,7 +403,7 @@ function BookingPanel({ service, balance, onBooked, t, locale }) {
   };
 
   if (!hasSchedule) return null;
-  const canPay = !isQuote && payNow > balance;
+  const canPay = !isQuote && total > balance;
 
   return (
     <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-4 space-y-4" data-testid="booking-panel">
@@ -424,9 +452,14 @@ function BookingPanel({ service, balance, onBooked, t, locale }) {
                 <div className="text-xs text-neutral-400">{t("svcMarket.booking.total")}</div>
                 <div className="font-display text-2xl text-[#8B5CF6]" data-testid="booking-total">{total} USDT</div>
                 {hasDeposit && (
-                  <div className="text-[0.7rem] text-emerald-300 mt-0.5" data-testid="booking-paynow">
-                    {t("svcMarket.booking.payNow")}: {payNow} USDT
-                  </div>
+                  <>
+                    <div className="text-[0.7rem] text-emerald-300 mt-0.5" data-testid="booking-paynow">
+                      {t("svcMarket.booking.payNow")}: {payNow} USDT
+                    </div>
+                    <div className="text-[0.7rem] text-sky-300 inline-flex items-center gap-1 justify-end" data-testid="booking-frozen">
+                      <Snowflake className="w-3 h-3" /> {t("svcMarket.booking.frozen")}: {rest} USDT
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -439,10 +472,13 @@ function BookingPanel({ service, balance, onBooked, t, locale }) {
           </div>
 
           <div className="text-xs text-neutral-400 border-l-2 border-[#8B5CF6]/40 pl-3">
-            {isQuote ? t("svcMarket.booking.quoteInfo") : hasDeposit ? t("svcMarket.booking.depositInfo") : t("svcMarket.booking.heldInfo")}
+            {isQuote ? t("svcMarket.booking.quoteInfo") : hasDeposit ? t("svcMarket.booking.frozenInfo", { deposit: payNow, frozen: rest }) : t("svcMarket.booking.heldInfo")}
           </div>
           {!isQuote && (
-            <div className="text-xs text-neutral-500" data-testid="booking-balance">{t("svcMarket.booking.yourBalance", { amount: balance.toLocaleString(undefined, { maximumFractionDigits: 2 }) })}</div>
+            <div className="text-xs text-neutral-500" data-testid="booking-balance">
+              {t("svcMarket.booking.yourBalance", { amount: balance.toLocaleString(undefined, { maximumFractionDigits: 2 }) })}
+              {canPay && <span className="text-red-400 ml-1">· {t("svcMarket.booking.needFull", { amount: total })}</span>}
+            </div>
           )}
 
           <Button data-testid="booking-confirm" onClick={confirm} disabled={busy || canPay}
@@ -600,6 +636,14 @@ function ServiceReviews({ serviceId, t }) {
                 <span className="text-xs text-neutral-300">{rv.customer_name}</span>
               </div>
               {rv.comment && <p className="text-sm text-neutral-300 mt-1 whitespace-pre-line">{rv.comment}</p>}
+              {rv.company_response && (
+                <div className="mt-2 ml-3 border-l-2 border-[#8B5CF6]/40 pl-3" data-testid={`service-review-reply-${rv.id}`}>
+                  <div className="text-[0.65rem] uppercase tracking-wider text-[#A78BFA] flex items-center gap-1">
+                    <CornerDownRight className="w-3 h-3" /> {t("svcMarket.reviews.companyReply")}
+                  </div>
+                  <p className="text-sm text-neutral-300 mt-0.5 whitespace-pre-line">{rv.company_response}</p>
+                </div>
+              )}
             </li>
           ))}
         </ul>
