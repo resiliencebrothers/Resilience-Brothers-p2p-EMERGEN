@@ -1,0 +1,25 @@
+{
+  "summary": "Frontend E2E (Playwright, cookie sessions bk_smoke_vip / bk_smoke_emp, desktop 1920x1080) for Service Marketplace Fase 2b features 1, 2, 2b, 3. ALL PASS. F1: 'Mejor valoración' re-orders list to [TEST_BK_3dd17b9b(5.0), TEST_BK_LOWRATED(3.0), TEST_BK_DEPOSIT(unrated)] vs recent order [DEPOSIT, LOWRATED, 3dd17b9b]; rating badges show '5 · 1 reseña' / '3 · 1 reseña'; unrated service has no badge. F2: /company/bookings renders company-reviews-section with RVSEED_244d52 + RVSEED_385dfd; save disabled while empty; reply saved, rendered in company-review-reply-RVSEED_244d52 with Editar respuesta button, persisted after reload; Edit pre-fills textarea. F2b: customer sees 'Respuesta de la empresa' blocks for RVSEED_385dfd (pre-set text) and RVSEED_244d52 (newly saved text). F3: TEST_BK_DEPOSIT booking panel shows Total 100 USDT, 'Pagas ahora (anticipo): 30 USDT', 'Congelado: 70 USDT', copy 'Se cobra ahora el anticipo (30 USDT) y se congela el resto (70 USDT). Si cancelas antes de la cita, te devolvemos todo.'; booking toast success; balance 5000→4900 (full amount debited); svc-frozen-total shows 'Congelado en reservas activas: 70 USDT'; Mis reservas shows PENDIENTE + 'Anticipo 30 USDT · 70 USDT congelados (se devuelven si cancelas)'; cancel (confirm dialog) → CANCELADA, toast 'se devolvió tu importe', balance back to 5000, frozen bar gone.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/company/bookings reviews", "issues": ["'Editar respuesta' link is small and low-contrast grey on dark card (minor)"]},
+      {"screen": "Services booking", "issues": ["After confirming a booking the view auto-switches to 'Mis reservas' tab and closes the dialog — fine, but unexpected for test scripts; not a bug"]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ServicesMarketplace.jsx BookingPanel: variable 'canPay' actually means 'cannot pay' (total > balance) — rename to insufficient for readability.",
+    "Insufficient-balance guard (booking-confirm disabled + 'needFull' red text) only verified by code inspection — VIP balance 5000 exceeds all seeded prices; not exercised in UI.",
+    "ServicesMarketplace.jsx is 654 lines — near the 700-line split threshold; consider extracting BookingPanel/MyBookings/ServiceReviews into separate files."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not requested)", "frontend": "100%"},
+  "seed_data_creation": "Company reply saved on RVSEED_244d52: '¡Gracias por tu reseña! Te esperamos de nuevo.' (review no longer in 'no reply' state). Created + cancelled booking 0dfbbab8-eb6a-40bc-bbe3-e623ba246651 (TEST_BK_DEPOSIT, 2026-10-31 09:00); VIP balance restored to 5000.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use cookies session_token=bk_smoke_vip / bk_smoke_emp on domain p2p-exchange-hub-2.preview.emergentagent.com (secure, sameSite None). Calendar day buttons: '[data-testid=booking-calendar] button[name=day]:not([disabled])'. Cancel uses window.confirm — accept dialog. To re-test 'no reply' state on RVSEED_244d52, clear company_response in DB. Feature 4 (login recovery guidance) not tested (Turnstile)."
+}
