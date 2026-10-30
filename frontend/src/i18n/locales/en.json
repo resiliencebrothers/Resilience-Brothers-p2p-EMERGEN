@@ -5844,7 +5844,7 @@
       "submitFailed": "Could not submit the verification."
     },
     "products": {
-      "sectionLabel": "Company",
+      "sectionLabel": "Business",
       "title": "My products",
       "newBtn": "New product",
       "commissionNote": "Resilience applies a {{pct}}% commission on every marketplace sale.",
@@ -5915,7 +5915,7 @@
       "offerRemoveFailed": "Could not remove the offer"
     },
     "services": {
-      "sectionLabel": "Company",
+      "sectionLabel": "Business",
       "title": "My services",
       "newBtn": "New service",
       "notePre": "Describe the service, its availability and how it's paid. When you submit it, the Resilience team reviews it and, once approved, it appears in the market's ",

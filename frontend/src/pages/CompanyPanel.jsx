@@ -91,11 +91,11 @@ export default function CompanyPanel() {
     <div className="min-h-screen bg-[#14101F] text-white">
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#14101F]/90 backdrop-blur">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Building2 className="w-6 h-6 text-[#8B5CF6]" />
-            <div>
-              <div className="micro-label text-[#8B5CF6] leading-none">{t("company.panel.headerLabel")}</div>
-              <div className="font-display text-base leading-tight" data-testid="company-name">{user?.name}</div>
+          <div className="flex items-center gap-3 min-w-0">
+            <Building2 className="w-6 h-6 text-[#8B5CF6] shrink-0" />
+            <div className="min-w-0">
+              <div className="micro-label text-[#8B5CF6] leading-none whitespace-nowrap">{t("company.panel.headerLabel")}</div>
+              <div className="font-display text-base leading-tight truncate" data-testid="company-name">{user?.name}</div>
             </div>
             {kybVerified && (
               <span data-testid="company-verified-badge"

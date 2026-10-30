@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend-only i18n check of the whole Company panel (/company) using the company E2E cookie session and the real header toggle (compact-lang-switcher). Static check: every literal t('company.*') key in the 10 company files exists in both es.json and en.json, and the 'company' namespaces match exactly in both files. Dynamic enum keys (status/modality/pricing/priceUnit/move/tabs) all have entries. UI: all 11 tabs (overview, stores, products, services, bookings, inventory, deliveries/Courier, wallet/Balance, tools, kyc/Verification, security) were swept in EN -> ES -> EN at 1920x800. Result: 0 raw 'company.*' keys in innerText or in placeholder/title/aria-label. In EN, a scan for leftover Spanish UI words found none on any tab or in the New service, New product, New store and Request delivery dialogs. In ES, the services/products dialogs and all tabs had no leaks. The service-dialog calendar follows the language (October/Mo Tu... vs octubre/lu ma...). User data stays untranslated as expected (service titles, DB category 'Otros', 'Asesoría'). Mobile 390x844 in both languages: no horizontal overflow (scrollWidth == innerWidth) and the service dialog fits (358px wide). One minor header clipping issue on mobile. No console errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CompanyPanel header (mobile 390px)", "issue": "The header label (t('company.panel.headerLabel'), 'BUSINESS PANEL' / 'PANEL EMPRESA') wraps to 2 lines and the company name wraps to 3 lines inside the fixed h-16 header. The first line of the label renders at top=-9px and is clipped, so only 'PANEL' (EN) or 'EMPRESA' (ES) shows. This happens in both languages. Fix: add whitespace-nowrap/truncate to the label and truncate the name (min-w-0, truncate), or use h-auto/min-h-16.", "selector": "header .micro-label, [data-testid='company-name']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Company panel section labels (EN)", "issues": ["Inconsistent section label: Stores/Courier/Bookings/Inventory/Wallet use sectionLabel 'Business', while Products and Services use 'Company' (en.json ~lines 5847 and 5918). Pick one term."]},
+      {"screen": "Service/Product dialogs", "issues": ["Native <input type=file> shows browser-locale 'Choose File / No file chosen' even in Spanish. Consider a custom localized file button (cosmetic)."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "LOW: Fix mobile header clipping in CompanyPanel.jsx (label wraps and the top line is cut off at 390px).",
+    "LOW: Make the EN sectionLabel consistent ('Business' vs 'Company') across company views.",
+    "OPTIONAL: Localize the native file-input button text."
+  ],
+  "critical_code_review_comments": [
+    "Every static company.* key resolves in both locales, and the es and en company namespaces have the same key sets.",
+    "Dynamic keys rely on backend enums. If the backend adds a new status/modality/pricing_type, CompanyServicesView priceUnit (line ~193) has no defaultValue and would leak a raw key. Its hasUnit guard protects it today."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100% (i18n requirements); 1 low-priority mobile layout issue"},
+  "seed_data_creation": "None. Used the existing test_session_empresa_e2e_X company account.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The company E2E account's server-side preferred_language may currently be 'en'. The switcher label shows the TARGET language. Tab ids: overview, stores, products, services, bookings, inventory, deliveries, wallet, tools, kyc, security (no 'courier'/'balance' testids; those are labels). The key-coverage script used is at /tmp/keys.py; re-create it if needed."
+}
