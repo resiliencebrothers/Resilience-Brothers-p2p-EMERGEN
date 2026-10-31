@@ -210,7 +210,7 @@ export function DepositForm({ onSubmitted, showHistory = true, method = "transfe
           {needsAccount && (
             <div data-testid="deposit-destination-account">
               <Label className="micro-label text-neutral-500 mb-1 block">{t("deposits.destinationAccountLabel")}</Label>
-              <PaymentAccountBlock fromCurr={cur} amount={amount} paymentAccount={paymentAccount} />
+              <PaymentAccountBlock fromCurr={cur} amount={amount} paymentAccount={paymentAccount} networkUnavailable={networkUnavailable} network={network} />
               {!paymentAccount.hasTiers && !cur?.payment_account && (
                 <p className="text-xs text-neutral-500 border border-dashed border-white/10 p-3" data-testid="deposit-no-account-hint">
                   {t("deposits.noDestinationAccount")}

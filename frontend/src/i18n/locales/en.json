@@ -2450,7 +2450,7 @@
       "accountLabel": "Company collection account (where the client sent the money)",
       "accountMissing": "Account not recorded.",
       "accountMissingShort": "Not recorded",
-      "accountMissingDepositHint": "Assign it from Deposits & Withdrawals → Deposits → “Assign account”.",
+      "accountMissingDepositHint": "Confirm it from Deposits & Withdrawals → Deposits → “Confirm account”.",
       "accountCashNA": "Cash: no collection account applies.",
       "expectedAccountLabel": "Expected account (shared with the client)",
       "confirmedAccountLabel": "Confirmed account (reconciliation)",
@@ -4260,7 +4260,9 @@
     "confirmAccountSave": "Confirm account",
     "confirmedAccountToast": "Receiving account confirmed",
     "assignNoteLabel": "Evidence / reference (optional)",
-    "assignNotePlaceholder": "Statement ref., reconciliation note…"
+    "assignNotePlaceholder": "Statement ref., reconciliation note…",
+    "focusBanner": "Showing the deposit opened from Transactions (all statuses).",
+    "focusClear": "Clear focus"
   },
   "historyHub": {
     "breadcrumb": "/ HISTORY",

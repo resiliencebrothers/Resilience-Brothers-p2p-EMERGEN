@@ -2450,7 +2450,7 @@
       "accountLabel": "Cuenta de cobro de la empresa (a dónde envió el cliente)",
       "accountMissing": "Cuenta no registrada.",
       "accountMissingShort": "No registrada",
-      "accountMissingDepositHint": "Asígnala desde Depósitos y Retiros → Depósitos → «Asignar cuenta».",
+      "accountMissingDepositHint": "Confírmala desde Depósitos y Retiros → Depósitos → «Confirmar cuenta».",
       "accountCashNA": "Efectivo: no aplica cuenta de cobro.",
       "expectedAccountLabel": "Cuenta prevista (comunicada al cliente)",
       "confirmedAccountLabel": "Cuenta confirmada (conciliación)",
@@ -4260,7 +4260,9 @@
     "confirmAccountSave": "Confirmar cuenta",
     "confirmedAccountToast": "Cuenta receptora confirmada",
     "assignNoteLabel": "Evidencia / referencia (opcional)",
-    "assignNotePlaceholder": "Ref. del extracto, observación de conciliación…"
+    "assignNotePlaceholder": "Ref. del extracto, observación de conciliación…",
+    "focusBanner": "Mostrando el depósito abierto desde Transacciones (todos los estados).",
+    "focusClear": "Quitar foco"
   },
   "historyHub": {
     "breadcrumb": "/ HISTORIAL",

@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only E2E (Playwright, admin + normal client, ES & EN) of CO-01/CO-02/P3 fixes. PASS: tx-detail expected vs confirmed blocks for dep_seed_expected / dep_seed_legacy; admin 'Confirm account' dialog flow (option pick, note, toast, reload shows shield + account); confirmed account then shown in tx detail with VERIFIED badge + 'Verified by QA Admin' meta while expected stays 'not recorded' (DB checked: payment_account_* not back-filled); P3 deposit focus (URL /admin/withdrawals?tab=deposits&focus=<id>, ring highlight, scrolled into view); client crypto USDT BEP20 shows deposit-network-no-account + submit disabled, TRC20 shows Seed Wallet TRC20; EUR transfer deposit submitted (200, payment_account snapshot pa_seed_eur); deposits status filters + confirm/reject buttons; transactions legend + origin filter. FAIL: P3 ORDER focus – target order row not found on /admin/orders when it's not on page 1 (common case).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminOrders focus (P3)", "issue": "Clicking 'Go to Orders' from the first ORDER row in Transactions (f891ce3c-e13b-440e-83a2-e50e9cf63c5d, completed, 169 newer orders exist) navigates to /admin/orders?focus=<id> but admin-order-row-<id> is not rendered: AdminOrders loads page 0 (PAGE_SIZE=50, filter 'all') and ignores focusId when fetching. Transactions only lists approved/completed orders, so most targets are beyond page 1. Same for old order d64e169b-... Fix: when focusId present, fetch that order (e.g. GET /admin/orders/{id} or user_q/id filter) and prepend/pin it, or compute its page; optionally auto-open its detail.", "selector": "[data-testid=admin-order-row-<id>]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AdminDeposits with ?focus", "issues": ["In focus mode the status filter is bypassed (all statuses listed) but the 'Pending/Pendientes' chip stays highlighted, misleading the operator. Show no active chip or a 'Showing focused deposit – clear' indicator."]},
+      {"screen": "TransactionDetailModal (deposit, expected missing)", "issues": ["Hint text says 'Assign it from ... → \"Assign account\" / «Asignar cuenta»' but the button is now labelled 'Confirm account / Confirmar cuenta' (i18n key admin.transactions.accountMissingDepositHint, en+es)."]},
+      {"screen": "DepositForm crypto (BEP20 with no account)", "issues": ["Destination box shows 'No collection account available for that amount' (amount wording) while the real cause is the network; the network-specific message appears only below the network select. Use network message in the destination box too.", "CRYPTO_NETWORKS (services/cryptoValidators.js) only offers TRC20 and BEP20, so the seeded ERC20 account (pa_seed_usdt_erc) can never be selected by clients – review request expected ERC20 selectable."]},
+      {"screen": "Transaction detail modal", "issues": ["Status 'CONFIRMED' and method 'TRANSFER' rendered raw (untranslated) in ES (pre-existing)."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "HIGH: Make /admin/orders?focus=<id> locate the order regardless of pagination/filters (fetch focused order or jump to its page), then highlight+scroll.",
+    "Update accountMissingDepositHint (en/es) to reference 'Confirm account / Confirmar cuenta'.",
+    "AdminDeposits focus mode: don't show 'pending' chip as active while status filter is bypassed. Also limit=300 means focus will fail once >300 deposits exist (currently 187) – consider fetching focused deposit by id.",
+    "DepositForm: show network-specific message inside destination box when networkAvailable=false; decide whether ERC20 should be in CRYPTO_NETWORKS.",
+    "Optional: AssignDepositAccountDialog for crypto deposits lists accounts of all networks; filter/flag by deposit network (backend already 422s on mismatch when deposit has a network)."
+  ],
+  "critical_code_review_comments": [
+    "AdminOrders.jsx load() never uses focusId – focus highlight only works if the order happens to be on current page/filter.",
+    "AdminDeposits.jsx focus bypasses status but still capped by limit 300 (backend max 500).",
+    "Crypto seeded deposits (dep_3891b7466e37 etc.) have no 'network' field, so CO-01 confirm-time network validation is skipped for them (by design when network empty)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend only)", "frontend": "~90% (9/10 flows pass; order focus fails)"},
+  "seed_data_creation": "Re-ran python /app/backend/seed_co_fixes_smoke.py at end to reset dep_seed_legacy to unverified. Test EUR deposit dep_19a270173318 created via UI and deleted from DB. Admin language preference toggled to ES and restored to EN.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth via cookie session_token=test_session_admin_X / test_session_normal_X on preview domain. Admin language follows server preference (admin-lang-switcher shows the NEXT language). Client deposit form: /dashboard/vip → action-deposit-btn → method-option-crypto|transfer; network options TRC20/BEP20 only. Retest P3 order focus with an order beyond page 1 (e.g. f891ce3c-e13b-440e-83a2-e50e9cf63c5d)."
+}

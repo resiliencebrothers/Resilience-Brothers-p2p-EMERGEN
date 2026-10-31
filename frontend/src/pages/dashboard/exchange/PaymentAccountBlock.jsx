@@ -20,7 +20,7 @@ function CopyBtn({ text, testid }) {
 // tiered accounts configured, the account matching the typed amount is
 // shown (or a below-minimum warning). Legacy single-account currencies
 // keep the old behaviour via `fromCurr.payment_account`.
-export default function PaymentAccountBlock({ fromCurr, amount, paymentAccount }) {
+export default function PaymentAccountBlock({ fromCurr, amount, paymentAccount, networkUnavailable, network }) {
   const { t } = useTranslation();
   const pa = paymentAccount || {};
   const amt = Number(amount) || 0;
@@ -30,6 +30,13 @@ export default function PaymentAccountBlock({ fromCurr, amount, paymentAccount }
       return (
         <div className="border border-white/10 p-4 text-xs text-neutral-500" data-testid="payment-account-enter-amount">
           {t("exchange.accountEnterAmount")}
+        </div>
+      );
+    }
+    if (networkUnavailable) {
+      return (
+        <div className="border border-amber-500/40 bg-amber-500/5 p-4 text-xs text-amber-400" data-testid="payment-account-network-none">
+          {t("deposits.networkNoAccount", { network: network || "" })}
         </div>
       );
     }

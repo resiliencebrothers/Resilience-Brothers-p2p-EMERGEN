@@ -133,7 +133,7 @@ export default function AdminDeposits({ onChanged }) {
             onClick={() => { setStatusFilter(s); setFocusActive(false); }}
             data-testid={`deposits-filter-${s}`}
             className={`text-xs uppercase tracking-widest px-3 py-1.5 border font-mono transition-colors ${
-              statusFilter === s
+              statusFilter === s && !focusActive
                 ? "bg-[#8B5CF6]/10 border-[#8B5CF6] text-[#8B5CF6]"
                 : "bg-transparent border-white/10 text-neutral-400 hover:border-white/30"
             }`}
@@ -158,6 +158,23 @@ export default function AdminDeposits({ onChanged }) {
           </button>
         ))}
       </div>
+
+      {focusActive && focusId && (
+        <div
+          className="flex items-center justify-between gap-3 border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 px-3 py-2 text-xs text-[#A78BFA]"
+          data-testid="deposits-focus-banner"
+        >
+          <span>{t("adminDeposits.focusBanner")}</span>
+          <button
+            type="button"
+            onClick={() => { setFocusActive(false); setStatusFilter("pending"); }}
+            data-testid="deposits-focus-clear"
+            className="uppercase tracking-widest text-[#8B5CF6] hover:underline"
+          >
+            {t("adminDeposits.focusClear")}
+          </button>
+        </div>
+      )}
 
       <div className="tactile-card overflow-x-auto overflow-y-auto max-h-[70vh]" data-testid="admin-deposits-scroll">
         <table className="w-full text-sm min-w-[980px]">

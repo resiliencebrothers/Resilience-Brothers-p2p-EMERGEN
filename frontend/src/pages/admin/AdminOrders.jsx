@@ -92,6 +92,21 @@ export default function AdminOrders() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [focusId, loading, orders]);
 
+  // P3 — la orden buscada puede quedar fuera de la página/estado actual: se
+  // trae por id y se fija al inicio de la lista para poder resaltarla.
+  useEffect(() => {
+    if (!focusId) return undefined;
+    if (orders.some((o) => o.id === focusId)) return undefined;
+    let cancelled = false;
+    axios.get(`${API}/admin/orders/${focusId}`, { withCredentials: true })
+      .then((r) => {
+        if (cancelled || !r.data) return;
+        setOrders((prev) => (prev.some((o) => o.id === focusId) ? prev : [r.data, ...prev]));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [focusId, orders]);
+
   const openOrder = (o) => {
     setOpen(o);
     setNote(o.admin_note || "");

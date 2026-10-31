@@ -258,6 +258,18 @@ async def all_orders(request: Request, status: Optional[str] = None,
     )
 
 
+@router.get("/admin/orders/{order_id}")
+async def admin_order_by_id(order_id: str, request: Request) -> Any:
+    """P3 — fetch a single order by id so Transacciones can jump straight to it
+    regardless of pagination/filters. Respects the employee currency scope."""
+    actor = await require_permission(request, "orders")
+    q: Dict[str, Any] = {"id": order_id, **_orders_admin_query(actor, None, None, None, None)}
+    doc = await db.orders.find_one(q, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Orden no encontrada.")
+    return doc
+
+
 def _detect_crypto_network_from_delivery(delivery_details: str) -> str:
     """Sniff TRC20/BEP20 from `delivery_details` (same heuristic used across
     the codebase). Returns '' when the network cannot be inferred."""
