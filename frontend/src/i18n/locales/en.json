@@ -2329,7 +2329,22 @@
       "totalsColOps": "Ops",
       "totalsEmpty": "No movements with a collection account in this period.",
       "exportOk": "Exported ({{kind}})",
-      "exportError": "Error exporting {{kind}}"
+      "exportError": "Error exporting {{kind}}",
+      "reconTitle": "Reconciliation by account",
+      "reconHelper": "All money that arrived in each collection account during the period (deposits by confirmed account, orders and batches). Use it to reconcile against the bank statement at a glance.",
+      "reconColAccount": "Account",
+      "reconColConfirmed": "Confirmed",
+      "reconColPending": "Pending",
+      "reconColTotal": "Total",
+      "reconColDeposits": "Deposits (verified / unverified)",
+      "reconColOps": "Ops",
+      "reconUnassigned": "Unassigned · {{currency}}",
+      "reconInactive": "inactive",
+      "reconEmpty": "No entries in this period.",
+      "reconVerifiedHint": "Confirmed deposits whose receiving account has been reconciled.",
+      "reconUnverifiedHint": "Confirmed deposits whose receiving account has not been reconciled yet.",
+      "reconUnverifiedWarn": "{{amount}} in deposits not reconciled",
+      "reconDepositsLegend": "The “Deposits” column shows: reconciled (confirmed account) / unreconciled (pending to confirm which account received them)."
     },
     "clientDebts": {
       "open": "Client debts",

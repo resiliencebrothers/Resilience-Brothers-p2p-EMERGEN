@@ -332,6 +332,181 @@ async def export_daily_totals_pdf(request: Request, days: int = 14,
     )
 
 
+# ============================================================
+# Conciliación por cuenta — resumen agregado POR CUENTA (no por día) de todo
+# el dinero que entró a cada cuenta de cobro: depósitos (por cuenta CONFIRMADA
+# con reserva a la prevista), órdenes y lotes VIP. Pensado para cuadrar el
+# banco de un vistazo. Solo lectura + export.
+# ============================================================
+_UNASSIGNED = "__unassigned__"
+
+
+async def _reconciliation_summary(days: int) -> dict:
+    days = max(1, min(days, 365))
+    start = (now_utc() - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    accounts = {
+        a["id"]: a
+        for a in await db.payment_accounts.find({}, {"_id": 0}).to_list(500)
+    }
+    rows: dict = {}
+
+    def slot(acc_id: str, flabel: Optional[str], fcur: Optional[str],
+             fnet: Optional[str]) -> dict:
+        if acc_id not in rows:
+            acc = accounts.get(acc_id) or {}
+            rows[acc_id] = {
+                "account_id": acc_id,
+                "label": acc.get("label") or flabel or acc_id,
+                "currency_code": acc.get("currency_code") or (fcur or ""),
+                "network": acc.get("network") or (fnet or ""),
+                "is_active": acc.get("is_active", True) if acc else None,
+                "unassigned": acc_id.startswith(_UNASSIGNED),
+                "confirmed": 0.0, "pending": 0.0,
+                "count_confirmed": 0, "count_pending": 0,
+                "deposits_verified": 0.0, "deposits_unverified": 0.0,
+                "by_source": {"deposit": 0.0, "order": 0.0, "vip_batch": 0.0},
+            }
+        return rows[acc_id]
+
+    # Depósitos (transfer/cripto): el dinero llegó a la cuenta CONFIRMADA; si
+    # aún no se concilió usamos la PREVISTA; sin ninguna → "sin asignar".
+    deps = await db.deposits.find(
+        {"status": {"$in": ["confirmed", "pending"]},
+         "method": {"$in": ["transfer", "crypto"]},
+         "created_at": {"$gte": start}},
+        {"_id": 0, "currency": 1, "amount": 1, "status": 1,
+         "payment_account_id": 1, "payment_account_label": 1,
+         "payment_account_network": 1, "confirmed_account_id": 1,
+         "confirmed_account_label": 1, "confirmed_account_network": 1},
+    ).to_list(50000)
+    for d in deps:
+        cur = (d.get("currency") or "").upper()
+        conf_id = d.get("confirmed_account_id") or ""
+        exp_id = d.get("payment_account_id") or ""
+        if conf_id:
+            acc_id, lbl, net = conf_id, d.get("confirmed_account_label"), d.get("confirmed_account_network")
+        elif exp_id:
+            acc_id, lbl, net = exp_id, d.get("payment_account_label"), d.get("payment_account_network")
+        else:
+            acc_id, lbl, net = f"{_UNASSIGNED}{cur}", None, None
+        s = slot(acc_id, lbl, cur, net)
+        amt = float(d.get("amount") or 0.0)
+        if d.get("status") == "confirmed":
+            s["confirmed"] += amt
+            s["count_confirmed"] += 1
+            s["by_source"]["deposit"] += amt
+            if conf_id:
+                s["deposits_verified"] += amt
+            else:
+                s["deposits_unverified"] += amt
+        else:
+            s["pending"] += amt
+            s["count_pending"] += 1
+
+    # Órdenes y lotes VIP: solo las que pagaron a una cuenta de cobro concreta
+    # (misma convención que los totales diarios).
+    orders = await db.orders.find(
+        {"payment_account_id": {"$nin": [None, ""]},
+         "status": {"$ne": "rejected"}, "created_at": {"$gte": start}},
+        {"_id": 0, "payment_account_id": 1, "payment_account_label": 1,
+         "from_code": 1, "amount_from": 1, "status": 1},
+    ).to_list(50000)
+    for o in orders:
+        s = slot(o["payment_account_id"], o.get("payment_account_label"),
+                 (o.get("from_code") or "").upper(), "")
+        amt = float(o.get("amount_from") or 0.0)
+        if o.get("status") in ("approved", "completed"):
+            s["confirmed"] += amt
+            s["count_confirmed"] += 1
+            s["by_source"]["order"] += amt
+        else:
+            s["pending"] += amt
+            s["count_pending"] += 1
+
+    items = await db.vip_batch_items.find(
+        {"payment_account_id": {"$nin": [None, ""]},
+         "status": {"$ne": "rejected"}, "created_at": {"$gte": start}},
+        {"_id": 0, "payment_account_id": 1, "payment_account_label": 1,
+         "from_code": 1, "currency": 1, "amount": 1, "status": 1},
+    ).to_list(50000)
+    for it in items:
+        cur = (it.get("from_code") or it.get("currency") or "").upper()
+        s = slot(it["payment_account_id"], it.get("payment_account_label"), cur, "")
+        amt = float(it.get("amount") or 0.0)
+        if it.get("status") == "approved":
+            s["confirmed"] += amt
+            s["count_confirmed"] += 1
+            s["by_source"]["vip_batch"] += amt
+        else:
+            s["pending"] += amt
+            s["count_pending"] += 1
+
+    totals_by_currency: dict = {}
+    for r in rows.values():
+        r["confirmed"] = round(r["confirmed"], 2)
+        r["pending"] = round(r["pending"], 2)
+        r["total"] = round(r["confirmed"] + r["pending"], 2)
+        r["deposits_verified"] = round(r["deposits_verified"], 2)
+        r["deposits_unverified"] = round(r["deposits_unverified"], 2)
+        for k in r["by_source"]:
+            r["by_source"][k] = round(r["by_source"][k], 2)
+        cur = r["currency_code"] or "?"
+        tc = totals_by_currency.setdefault(
+            cur, {"confirmed": 0.0, "pending": 0.0, "total": 0.0,
+                  "deposits_unverified": 0.0})
+        tc["confirmed"] += r["confirmed"]
+        tc["pending"] += r["pending"]
+        tc["total"] += r["total"]
+        tc["deposits_unverified"] += r["deposits_unverified"]
+    for tc in totals_by_currency.values():
+        for k in tc:
+            tc[k] = round(tc[k], 2)
+
+    out = sorted(
+        rows.values(),
+        key=lambda r: (r["currency_code"] or "~", r["unassigned"], r["label"]),
+    )
+    return {"start": start, "days": days, "accounts": out,
+            "totals_by_currency": totals_by_currency}
+
+
+@router.get("/admin/payment-accounts/reconciliation-summary")
+async def payment_account_reconciliation_summary(
+        request: Request, days: int = 30) -> Any:
+    await require_permission(request, "payment_accounts")
+    return await _reconciliation_summary(days)
+
+
+@router.get("/admin/payment-accounts/reconciliation-summary/export.csv")
+async def export_reconciliation_summary_csv(
+        request: Request, days: int = 30) -> Any:
+    await require_permission(request, "payment_accounts")
+    data = await _reconciliation_summary(days)
+    text_buf = io.StringIO()
+    writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
+    writer.writerow(["cuenta", "red", "moneda", "confirmado", "pendiente",
+                     "total", "dep_verificados", "dep_sin_verificar",
+                     "ops_confirmadas", "ops_pendientes"])
+    for r in data["accounts"]:
+        label = (f"Sin asignar · {r['currency_code']}" if r["unassigned"]
+                 else r["label"])
+        writer.writerow([
+            label, r["network"], r["currency_code"],
+            f"{r['confirmed']:.2f}", f"{r['pending']:.2f}", f"{r['total']:.2f}",
+            f"{r['deposits_verified']:.2f}", f"{r['deposits_unverified']:.2f}",
+            r["count_confirmed"], r["count_pending"],
+        ])
+    buf = BytesIO(text_buf.getvalue().encode("utf-8-sig"))
+    ts = now_utc().strftime("%Y%m%d_%H%M")
+    return StreamingResponse(
+        buf,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 f'attachment; filename="conciliacion_por_cuenta_{ts}.csv"'},
+    )
+
+
+
 @router.get("/admin/payment-accounts")
 async def list_payment_accounts(
     request: Request, currency: Optional[str] = None,

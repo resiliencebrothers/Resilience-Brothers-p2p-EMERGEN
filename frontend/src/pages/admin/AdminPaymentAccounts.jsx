@@ -184,6 +184,8 @@ export default function AdminPaymentAccounts() {
 
       <DailyTotalsSection accounts={accounts} />
 
+      <ReconciliationByAccountSection />
+
       <Dialog open={open} onOpenChange={setOpen}>        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">
@@ -401,6 +403,156 @@ function DailyTotalsSection({ accounts }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+const RECON_RANGE = [7, 14, 30, 90];
+
+// Conciliación por cuenta — resumen agregado por cuenta de TODO el dinero que
+// entró (depósitos por cuenta confirmada + órdenes + lotes). Solo lectura.
+function ReconciliationByAccountSection() {
+  const { t } = useTranslation();
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState({ accounts: [], totals_by_currency: {} });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    axios.get(`${API}/admin/payment-accounts/reconciliation-summary`, {
+      params: { days }, withCredentials: true,
+    })
+      .then((r) => { if (!cancelled) setData(r.data || { accounts: [], totals_by_currency: {} }); })
+      .catch(() => { if (!cancelled) setData({ accounts: [], totals_by_currency: {} }); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [days]);
+
+  const exportCsv = async () => {
+    try {
+      const url = `${API}/admin/payment-accounts/reconciliation-summary/export.csv?days=${days}`;
+      const r = await axios.get(url, { responseType: "blob", withCredentials: true });
+      const blobUrl = URL.createObjectURL(new Blob([r.data], { type: r.headers["content-type"] }));
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      a.download = `conciliacion_por_cuenta_${ts}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+      toast.success(t("admin.paymentAccounts.exportOk", { kind: "CSV" }));
+    } catch {
+      toast.error(t("admin.paymentAccounts.exportError", { kind: "CSV" }));
+    }
+  };
+
+  const fmt = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
+  const rows = data.accounts || [];
+  const totals = data.totals_by_currency || {};
+
+  return (
+    <div className="mt-10" data-testid="reconciliation-by-account-section">
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-2">
+        <div>
+          <h2 className="font-display text-lg text-white">{t("admin.paymentAccounts.reconTitle")}</h2>
+          <p className="text-xs text-neutral-500 max-w-2xl mt-1">{t("admin.paymentAccounts.reconHelper")}</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {RECON_RANGE.map((d) => (
+            <button
+              key={d}
+              data-testid={`recon-range-${d}`}
+              onClick={() => setDays(d)}
+              className={`micro-label px-3 py-1.5 border transition-colors ${
+                days === d
+                  ? "bg-[#8B5CF6] text-white border-[#8B5CF6]"
+                  : "border-white/10 text-neutral-400 hover:text-white"
+              }`}
+            >
+              {t("admin.paymentAccounts.totalsDays", { n: d })}
+            </button>
+          ))}
+          <button
+            data-testid="recon-export-csv"
+            onClick={exportCsv}
+            className="micro-label px-3 py-1.5 border border-white/10 text-neutral-300 hover:text-white hover:border-[#8B5CF6] transition-colors flex items-center gap-1.5"
+          >
+            <Download className="w-3 h-3" /> CSV
+          </button>
+        </div>
+      </div>
+
+      {Object.keys(totals).length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-3" data-testid="recon-currency-cards">
+          {Object.entries(totals).sort((a, b) => a[0].localeCompare(b[0])).map(([cur, tc]) => (
+            <div key={cur} className="border border-white/10 bg-[#0a0a0a] p-3" data-testid={`recon-card-${cur}`}>
+              <div className="font-mono text-sm text-white">{cur}</div>
+              <div className="text-[0.7rem] text-emerald-400 mt-1">{t("admin.paymentAccounts.reconColConfirmed")}: {fmt(tc.confirmed)}</div>
+              <div className="text-[0.7rem] text-amber-400">{t("admin.paymentAccounts.reconColPending")}: {fmt(tc.pending)}</div>
+              {tc.deposits_unverified > 0 && (
+                <div className="text-[0.65rem] text-amber-500 mt-1">{t("admin.paymentAccounts.reconUnverifiedWarn", { amount: fmt(tc.deposits_unverified) })}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="tactile-card overflow-x-auto">
+        <table className="w-full text-sm min-w-[820px]">
+          <thead className="border-b border-white/10 bg-[#0a0a0a]">
+            <tr className="text-left">
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.paymentAccounts.reconColAccount")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("admin.paymentAccounts.reconColConfirmed")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("admin.paymentAccounts.reconColPending")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("admin.paymentAccounts.reconColTotal")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("admin.paymentAccounts.reconColDeposits")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("admin.paymentAccounts.reconColOps")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-neutral-500 text-xs">{t("common.loading")}</td></tr>
+            )}
+            {!loading && rows.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-neutral-500 text-xs" data-testid="recon-empty">
+                {t("admin.paymentAccounts.reconEmpty")}
+              </td></tr>
+            )}
+            {!loading && rows.map((r) => (
+              <tr
+                key={r.account_id}
+                className={`border-b border-white/5 ${r.unassigned ? "bg-amber-500/5" : ""}`}
+                data-testid={`recon-row-${r.account_id}`}
+              >
+                <td className="px-4 py-2.5 text-xs">
+                  {r.unassigned ? (
+                    <span className="text-amber-400">{t("admin.paymentAccounts.reconUnassigned", { currency: r.currency_code || "?" })}</span>
+                  ) : (
+                    <span className="text-neutral-200 flex items-center gap-2 flex-wrap">
+                      {r.label}
+                      {r.network && <span className="text-[0.55rem] font-mono px-1 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#A78BFA] uppercase">{r.network}</span>}
+                      <span className="text-[0.6rem] text-neutral-500 font-mono">{r.currency_code}</span>
+                      {r.is_active === false && <span className="text-[0.55rem] text-neutral-600 uppercase">({t("admin.paymentAccounts.reconInactive")})</span>}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 font-mono text-emerald-400 text-right">{fmt(r.confirmed)}</td>
+                <td className="px-4 py-2.5 font-mono text-amber-400 text-right">{r.pending > 0 ? fmt(r.pending) : "—"}</td>
+                <td className="px-4 py-2.5 font-mono text-white text-right font-semibold">{fmt(r.total)}</td>
+                <td className="px-4 py-2.5 text-right text-xs font-mono">
+                  <span className="text-emerald-400" title={t("admin.paymentAccounts.reconVerifiedHint")}>{fmt(r.deposits_verified)}</span>
+                  <span className="text-neutral-600"> / </span>
+                  <span className={r.deposits_unverified > 0 ? "text-amber-400" : "text-neutral-600"} title={t("admin.paymentAccounts.reconUnverifiedHint")}>{fmt(r.deposits_unverified)}</span>
+                </td>
+                <td className="px-4 py-2.5 font-mono text-neutral-500 text-right text-xs">{r.count_confirmed + r.count_pending}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[0.65rem] text-neutral-600 mt-2">{t("admin.paymentAccounts.reconDepositsLegend")}</p>
     </div>
   );
 }

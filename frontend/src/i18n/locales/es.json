@@ -2329,7 +2329,22 @@
       "totalsColOps": "Ops",
       "totalsEmpty": "Sin movimientos con cuenta de cobro en este período.",
       "exportOk": "Exportado ({{kind}})",
-      "exportError": "Error al exportar {{kind}}"
+      "exportError": "Error al exportar {{kind}}",
+      "reconTitle": "Conciliación por cuenta",
+      "reconHelper": "Todo el dinero que entró a cada cuenta de cobro en el período (depósitos por cuenta confirmada, órdenes y lotes). Úsalo para cuadrar con el extracto del banco de un vistazo.",
+      "reconColAccount": "Cuenta",
+      "reconColConfirmed": "Confirmado",
+      "reconColPending": "Pendiente",
+      "reconColTotal": "Total",
+      "reconColDeposits": "Depósitos (verif. / sin verif.)",
+      "reconColOps": "Ops",
+      "reconUnassigned": "Sin asignar · {{currency}}",
+      "reconInactive": "inactiva",
+      "reconEmpty": "Sin entradas en este período.",
+      "reconVerifiedHint": "Depósitos confirmados cuya cuenta receptora ya fue conciliada.",
+      "reconUnverifiedHint": "Depósitos confirmados cuya cuenta receptora aún no se concilió.",
+      "reconUnverifiedWarn": "{{amount}} en depósitos sin conciliar",
+      "reconDepositsLegend": "La columna «Depósitos» muestra: conciliados (cuenta confirmada) / sin conciliar (pendientes de confirmar a qué cuenta llegaron)."
     },
     "clientDebts": {
       "open": "Deudas con clientes",
