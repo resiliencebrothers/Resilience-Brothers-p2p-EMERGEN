@@ -1,3 +1,15 @@
+## Changelog — 31 Oct 2026 (Conciliación por cuenta — panel read-only en Cuentas de cobro)
+
+A petición del usuario tras los arreglos de la auditoría: un panel para **cuadrar el banco de un vistazo**, agrupando TODO el dinero que entró a cada cuenta de cobro.
+
+- **Backend** (`routes/payment_accounts.py`): `_reconciliation_summary(days)` + `GET /admin/payment-accounts/reconciliation-summary` + `.../reconciliation-summary/export.csv` (gate `payment_accounts`). Agrega por CUENTA (no por día): depósitos transfer/cripto (confirmados/pendientes) agrupados por **cuenta confirmada** → si no, por la **prevista** → si no, bucket «sin asignar» por moneda; + órdenes y lotes VIP con `payment_account_id`. Devuelve `confirmed`, `pending`, `total`, `deposits_verified`/`deposits_unverified` (trazabilidad CO-02), `by_source`, `is_active` (null = fuera de catálogo) y `totals_by_currency`.
+- **Frontend** (`AdminPaymentAccounts.jsx`): nueva sección `ReconciliationByAccountSection` debajo de los totales diarios. Tarjetas por moneda (confirmado/pendiente/sin conciliar), tabla por cuenta (confirmado emerald / pendiente amber / total / depósitos verif.·sin verif. / ops), rango 7/14/30/90/365 días, export CSV. Fila «sin asignar» en ámbar con etiqueta localizada; badges «inactiva» y «fuera de catálogo». i18n ES/EN (`admin.paymentAccounts.recon*`).
+- **Decisiones del usuario**: incluye todo el dinero (depósitos+órdenes+lotes); ubicado en Cuentas de cobro; solo lectura (sin botón de «cuadrada», totales + export).
+- **Verificado**: endpoint por curl + testing-agent frontend 100% (iteration_387) — render, datos vs API, rangos, CSV, i18n, sin regresión.
+- **Despliegue**: en PREVIEW. Requiere **volver a publicar** para producción.
+
+
+
 ## Changelog — 31 Oct 2026 (Auditoría Resilience b453da7 — CO-01/CO-02/CO-03 + P3/P4/P5)
 
 Dictamen de auditoría "Resilience" (clasificación/trazabilidad de operaciones). El usuario pidió "corregir los errores". Implementado y verificado (pytest 23/23 en `test_iter384_deposit_collection_account.py`, test directo `manual_co01_network_resolution.py` PASS, frontend E2E ES/EN 100% en iteration_385/386).

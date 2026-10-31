@@ -407,7 +407,7 @@ function DailyTotalsSection({ accounts }) {
   );
 }
 
-const RECON_RANGE = [7, 14, 30, 90];
+const RECON_RANGE = [7, 14, 30, 90, 365];
 
 // Conciliación por cuenta — resumen agregado por cuenta de TODO el dinero que
 // entró (depósitos por cuenta confirmada + órdenes + lotes). Solo lectura.
@@ -535,6 +535,7 @@ function ReconciliationByAccountSection() {
                       {r.network && <span className="text-[0.55rem] font-mono px-1 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#A78BFA] uppercase">{r.network}</span>}
                       <span className="text-[0.6rem] text-neutral-500 font-mono">{r.currency_code}</span>
                       {r.is_active === false && <span className="text-[0.55rem] text-neutral-600 uppercase">({t("admin.paymentAccounts.reconInactive")})</span>}
+                      {r.is_active === null && <span className="text-[0.55rem] text-amber-500 uppercase">({t("admin.paymentAccounts.reconOrphan")})</span>}
                     </span>
                   )}
                 </td>
@@ -552,7 +553,7 @@ function ReconciliationByAccountSection() {
           </tbody>
         </table>
       </div>
-      <p className="text-[0.65rem] text-neutral-600 mt-2">{t("admin.paymentAccounts.reconDepositsLegend")}</p>
+      <p className="text-[0.65rem] text-neutral-500 mt-2">{t("admin.paymentAccounts.reconDepositsLegend")}</p>
     </div>
   );
 }

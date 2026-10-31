@@ -2340,6 +2340,7 @@
       "reconColOps": "Ops",
       "reconUnassigned": "Sin asignar · {{currency}}",
       "reconInactive": "inactiva",
+      "reconOrphan": "fuera de catálogo",
       "reconEmpty": "Sin entradas en este período.",
       "reconVerifiedHint": "Depósitos confirmados cuya cuenta receptora ya fue conciliada.",
       "reconUnverifiedHint": "Depósitos confirmados cuya cuenta receptora aún no se concilió.",

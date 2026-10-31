@@ -2340,6 +2340,7 @@
       "reconColOps": "Ops",
       "reconUnassigned": "Unassigned · {{currency}}",
       "reconInactive": "inactive",
+      "reconOrphan": "not in catalog",
       "reconEmpty": "No entries in this period.",
       "reconVerifiedHint": "Confirmed deposits whose receiving account has been reconciled.",
       "reconUnverifiedHint": "Confirmed deposits whose receiving account has not been reconciled yet.",

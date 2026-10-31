@@ -1,0 +1,31 @@
+{
+  "summary": "Frontend-only test of the new 'Conciliación por cuenta' panel on /admin/payment-accounts (admin cookie test_session_admin_X). Everything requested passed. The section renders below Daily totals with 6 columns, per-currency cards (EUR/USD/USDT) and rows that match GET reconciliation-summary. Server date is 2026-10-31 and the seed records are dated 2026-03, so to check the seed values I used Playwright request interception to change the request to days=365. With that, pa_seed_eur showed 100 confirmed with deposits 50/50, and __unassigned__USDT showed the label 'Sin asignar · USDT' / 'Unassigned · USDT' with the amber bg-amber-500/5 class, 100 confirmed, 12 pending and deposits 0/100. The raw key never appears. Each range button (7/14/30/90) fires exactly one request with the correct days value, the active style updates, and the table reloads (empty state at 7/14/30, 1 row at 90). CSV export downloads conciliacion_por_cuenta_<ts>.csv with the exact requested header, unassigned rows read 'Sin asignar · USDT', and the 'Exportado (CSV)' toast appears. i18n ES<->EN via admin-lang-switcher translates the title, helper, headers, unassigned label, cards, warning and legend. Regression: the accounts table (3 seed rows) and the daily-totals-section still render.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reconciliation by account", "issues": [
+        "Rows for accounts missing from the payment_accounts catalog (e.g. payacc_usd_zelle50, is_active=null, with 21 pending ops worth 1,850 USD) show no 'deleted/not in catalog' badge. The inactive badge only shows when is_active === false. Consider a 'deleted' indicator so admins don't hunt for a non-existent account.",
+        "The longest range is 90 days, so older inbound money (e.g. seed data from 2026-03) cannot be reconciled from the UI. Consider adding a 365-day or custom range if needed.",
+        "Legend text uses text-neutral-600 at 0.65rem on a near-black background, which has low contrast."
+      ]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: badge orphaned accounts (is_active null / not in catalog) in the recon table",
+    "Optional: add a longer range (e.g. 365 days) to the recon panel",
+    "Optional: raise the contrast of the legend line"
+  ],
+  "critical_code_review_comments": [
+    "The ReconciliationByAccountSection fetch .catch silently replaces data with empty arrays and shows no error toast. A 403 or 500 looks like 'Sin entradas en este período', which is misleading for reconciliation.",
+    "The CSV filename and header are always Spanish regardless of UI language. This matches the spec, but you may want to note it for EN users."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100%"},
+  "seed_data_creation": "None. Used the existing seed_co_fixes_smoke data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Server clock is 2026-10-31 and the seed records are dated 2026-03, so seed rows only appear with days>=245. In Playwright, use page.route('**/reconciliation-summary**') to rewrite days=365. The admin language is synced to the server profile; when switching language, click admin-lang-switcher and wait about 2s, retrying if needed (a race with profile load can swallow the first click). The language was restored to ES at the end."
+}
