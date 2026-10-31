@@ -13,11 +13,13 @@ export function AssignDepositAccountDialog({ deposit, onClose, onDone }) {
   const { t } = useTranslation();
   const [options, setOptions] = useState([]);
   const [picked, setPicked] = useState("");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!deposit) return;
-    setPicked(deposit.payment_account_id || "");
+    setPicked(deposit.confirmed_account_id || deposit.payment_account_id || "");
+    setNote(deposit.confirmed_account_note || "");
     axios.get(`${API}/admin/deposits/payment-account-options`, {
       params: { currency: deposit.currency }, withCredentials: true,
     })
@@ -30,8 +32,8 @@ export function AssignDepositAccountDialog({ deposit, onClose, onDone }) {
     setBusy(true);
     try {
       await axios.put(`${API}/admin/deposits/${deposit.id}/payment-account`,
-        { payment_account_id: picked }, { withCredentials: true });
-      toast.success(t("adminDeposits.assignedToast"));
+        { payment_account_id: picked, note: note.trim() || null }, { withCredentials: true });
+      toast.success(t("adminDeposits.confirmedAccountToast"));
       onDone?.();
     } catch (err) {
       toast.error(err?.response?.data?.detail || t("adminDeposits.actionError"));
@@ -46,12 +48,12 @@ export function AssignDepositAccountDialog({ deposit, onClose, onDone }) {
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Landmark className="w-4 h-4 text-emerald-400" /> {t("adminDeposits.assignDialogTitle")}
+            <Landmark className="w-4 h-4 text-emerald-400" /> {t("adminDeposits.confirmAccountTitle")}
           </DialogTitle>
         </DialogHeader>
         {deposit && (
           <p className="text-xs text-neutral-400">
-            {t("adminDeposits.assignDialogHint", {
+            {t("adminDeposits.confirmAccountHint", {
               amount: deposit.amount, currency: deposit.currency, client: deposit.user_name || deposit.user_email,
             })}
           </p>
@@ -89,6 +91,20 @@ export function AssignDepositAccountDialog({ deposit, onClose, onDone }) {
             ))}
           </div>
         )}
+        {options.length > 0 && (
+          <div className="mt-2">
+            <label className="micro-label text-neutral-500 block mb-1">{t("adminDeposits.assignNoteLabel")}</label>
+            <textarea
+              data-testid="assign-account-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              maxLength={300}
+              placeholder={t("adminDeposits.assignNotePlaceholder")}
+              className="w-full bg-black/40 border border-white/10 rounded-none px-3 py-2 text-xs text-white placeholder:text-neutral-600 focus:border-emerald-500/50 focus:outline-none"
+            />
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-3 border-t border-white/5 mt-2">
           <Button variant="ghost" onClick={onClose} className="rounded-none text-neutral-400">
             {t("common.cancel")}
@@ -99,7 +115,7 @@ export function AssignDepositAccountDialog({ deposit, onClose, onDone }) {
             data-testid="assign-account-save"
             className="rounded-none bg-emerald-500 hover:bg-emerald-400 text-black font-semibold disabled:opacity-40"
           >
-            {t("adminDeposits.assignSave")}
+            {t("adminDeposits.confirmAccountSave")}
           </Button>
         </div>
       </DialogContent>

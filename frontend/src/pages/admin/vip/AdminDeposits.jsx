@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
+import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { API } from "@/App";
@@ -9,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Check, X as XIcon, Clock, ExternalLink, Truck, Building2, Search, Landmark } from "lucide-react";
+import { Check, X as XIcon, Clock, ExternalLink, Truck, Building2, Search, Landmark, ShieldCheck } from "lucide-react";
 import { useLiveRefresh } from "@/hooks/useLiveStream";
 import { AssignDepositAccountDialog } from "./AssignDepositAccountDialog";
 
@@ -23,6 +24,9 @@ const DEPOSIT_EVENTS = ["deposit_created"];
 
 export default function AdminDeposits({ onChanged }) {
   const { t } = useTranslation();
+  const [sp] = useSearchParams();
+  const focusId = sp.get("focus");
+  const [focusActive, setFocusActive] = useState(!!focusId);
   const [items, setItems] = useState([]);
   const [statusFilter, setStatusFilter] = useState("pending");
   const [methodFilter, setMethodFilter] = useState("all");
@@ -47,7 +51,10 @@ export default function AdminDeposits({ onChanged }) {
     abortRef.current = controller;
     if (initialLoadRef.current) setLoading(true);
     try {
-      const params = { status: statusFilter, limit: 300 };
+      const params = { limit: 300 };
+      // P3 — al llegar desde Transacciones con ?focus=<id>, no se filtra por
+      // estado para que el depósito buscado sea siempre localizable.
+      if (!(focusActive && focusId)) params.status = statusFilter;
       if (methodFilter !== "all") params.method = methodFilter;
       if (userQuery) params.user_q = userQuery;
       const r = await axios.get(`${API}/admin/deposits`, {
@@ -68,10 +75,17 @@ export default function AdminDeposits({ onChanged }) {
         abortRef.current = null;
       }
     }
-  }, [statusFilter, methodFilter, userQuery, t, onChanged]);
+  }, [statusFilter, methodFilter, userQuery, t, onChanged, focusActive, focusId]);
 
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(load, DEPOSIT_EVENTS);
+
+  // P3 — resalta y desplaza hasta el depósito buscado cuando ya cargó la lista.
+  useEffect(() => {
+    if (!focusId || loading) return;
+    const el = document.querySelector(`[data-testid="admin-deposit-row-${focusId}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusId, loading, items]);
 
   useEffect(() => () => {
     if (abortRef.current) {
@@ -116,7 +130,7 @@ export default function AdminDeposits({ onChanged }) {
           <button
             key={s}
             type="button"
-            onClick={() => setStatusFilter(s)}
+            onClick={() => { setStatusFilter(s); setFocusActive(false); }}
             data-testid={`deposits-filter-${s}`}
             className={`text-xs uppercase tracking-widest px-3 py-1.5 border font-mono transition-colors ${
               statusFilter === s
@@ -168,7 +182,7 @@ export default function AdminDeposits({ onChanged }) {
               </td></tr>
             )}
             {!loading && items.map((d) => (
-              <tr key={d.id} className="border-b border-white/5" data-testid={`admin-deposit-row-${d.id}`}>
+              <tr key={d.id} className={`border-b border-white/5${d.id === focusId ? " ring-2 ring-[#8B5CF6] ring-inset bg-[#8B5CF6]/5" : ""}`} data-testid={`admin-deposit-row-${d.id}`}>
                 <td className="px-4 py-3">
                   <div className="text-white text-xs">{d.user_name || "—"}</div>
                   <div className="text-[0.65rem] text-neutral-500 font-mono">{d.user_email}</div>
@@ -201,21 +215,39 @@ export default function AdminDeposits({ onChanged }) {
                     </div>
                   )}
                   {d.method !== "cash" && (
-                    <div className="text-[0.65rem] mt-0.5 flex items-center gap-1 flex-wrap" data-testid={`deposit-account-${d.id}`}>
-                      <Landmark className="w-3 h-3 text-neutral-500" />
-                      {d.payment_account_label ? (
-                        <span className="text-emerald-400">{d.payment_account_label}</span>
-                      ) : (
-                        <span className="text-amber-400">{t("adminDeposits.accountMissing")}</span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setAssigning(d)}
-                        data-testid={`deposit-assign-account-${d.id}`}
-                        className="text-[#A78BFA] hover:underline underline-offset-2"
-                      >
-                        {d.payment_account_label ? t("adminDeposits.changeAccount") : t("adminDeposits.assignAccount")}
-                      </button>
+                    <div className="text-[0.65rem] mt-0.5 space-y-0.5" data-testid={`deposit-account-${d.id}`}>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <Landmark className="w-3 h-3 text-neutral-500" />
+                        <span className="text-neutral-500">{t("adminDeposits.expectedAccountShort")}:</span>
+                        {d.payment_account_label ? (
+                          <span className="text-neutral-300">
+                            {d.payment_account_label}
+                            {d.payment_account_network && (
+                              <span className="ml-1 text-[0.55rem] uppercase font-mono text-[#A78BFA]">{d.payment_account_network}</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-neutral-600">{t("adminDeposits.accountMissing")}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 flex-wrap" data-testid={`deposit-confirmed-account-${d.id}`}>
+                        <span className="text-neutral-500">{t("adminDeposits.confirmedAccountShort")}:</span>
+                        {d.confirmed_account_label ? (
+                          <span className="text-emerald-400 inline-flex items-center gap-1">
+                            <ShieldCheck className="w-3 h-3" />{d.confirmed_account_label}
+                          </span>
+                        ) : (
+                          <span className="text-amber-400">{t("adminDeposits.accountNotVerified")}</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setAssigning(d)}
+                          data-testid={`deposit-assign-account-${d.id}`}
+                          className="text-[#A78BFA] hover:underline underline-offset-2"
+                        >
+                          {d.confirmed_account_label ? t("adminDeposits.changeAccount") : t("adminDeposits.confirmAccount")}
+                        </button>
+                      </div>
                     </div>
                   )}
                   {d.tx_hash && (

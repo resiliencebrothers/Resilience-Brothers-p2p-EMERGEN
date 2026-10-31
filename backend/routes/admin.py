@@ -1804,7 +1804,7 @@ async def export_transactions_csv(
             it.get("status", ""),
             it.get("ref_type", ""),
             it.get("ref_id", ""),
-            it.get("payment_account_label", ""),
+            it.get("confirmed_account_label") or it.get("payment_account_label", ""),
         ])
     buf = BytesIO()
     buf.write(text_buf.getvalue().encode("utf-8-sig"))

@@ -315,6 +315,7 @@ async def create_order(payload: OrderCreate, request: Request) -> Any:
     if payment_account:
         order.payment_account_id = payment_account.get("id", "")
         order.payment_account_label = payment_account.get("label", "")
+        order.payment_account_details = payment_account.get("account_details", "")
     residue = getattr(order, "_residue_to_credit", 0.0)
     order_doc = order.model_dump()
     # EX01 — el residuo NO se acredita al crear la orden: se persiste como

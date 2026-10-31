@@ -55,17 +55,27 @@ async def get_active_accounts(currency_code: str) -> list[dict]:
     ).to_list(100)
 
 
-async def resolve_for_amount(currency_code: str, amount: Optional[float]) -> dict:
+async def resolve_for_amount(currency_code: str, amount: Optional[float],
+                             network: Optional[str] = None) -> dict:
     accounts = await get_active_accounts(currency_code)
-    required = min_required(accounts)
+    has_tiers = len(accounts) > 0
+    # CO-01 — cuando el cliente elige una red cripto, el candidato se limita a
+    # las cuentas de ESA red; nunca se ofrece una cuenta de otra red.
+    pool = accounts
+    net = (network or "").strip().upper()
+    if net:
+        pool = [a for a in accounts if (a.get("network") or "").upper() == net]
+    required = min_required(pool)
     amt = float(amount or 0.0)
-    account = pick_account(accounts, amt) if amt > 0 else None
+    account = pick_account(pool, amt) if amt > 0 else None
     return {
         "currency_code": (currency_code or "").strip().upper(),
-        "has_tiers": len(accounts) > 0,
+        "has_tiers": has_tiers,
         "account": account,
         "min_required": required,
-        "below_min": bool(accounts) and amt > 0 and required is not None and amt < required,
+        "below_min": bool(pool) and amt > 0 and required is not None and amt < required,
+        # True salvo que se pida una red sin ninguna cuenta configurada.
+        "network_available": (not net) or bool(pool),
     }
 
 

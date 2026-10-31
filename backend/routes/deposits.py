@@ -371,6 +371,9 @@ def _require_client(user: dict) -> None:
 class DepositPaymentAccountPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
     payment_account_id: str = Field(..., min_length=1, max_length=64)
+    # CO-02 — evidencia opcional de la conciliación (referencia del extracto,
+    # observación del responsable que verificó la recepción del dinero).
+    note: Optional[str] = Field(default=None, max_length=300)
 
 
 def _account_snapshot(acc: dict) -> dict:
@@ -378,6 +381,9 @@ def _account_snapshot(acc: dict) -> dict:
         "id": acc.get("id", ""),
         "label": acc.get("label", ""),
         "account_details": acc.get("account_details", ""),
+        # CO-01 — la red forma parte de la instantánea: una cuenta cripto solo
+        # es válida para la red con la que fue configurada.
+        "network": (acc.get("network") or ""),
     }
 
 
@@ -386,24 +392,56 @@ async def _resolve_deposit_payment_account(currency: dict, method: str,
                                            network: Optional[str] = None) -> Optional[dict]:
     """Cuenta de cobro para transfer/cripto: escalonada por monto (misma
     regla que Cambiar) o, si la moneda no tiene escalones, la cuenta legada
-    de texto libre. Con escalones y sin cuenta para ese monto → 400. En
-    cripto se prefiere la cuenta de la misma red elegida por el cliente."""
+    de texto libre.
+
+    CO-01 — resolución ESTRICTA para cripto: la cuenta debe coincidir en
+    moneda + red + importe. Si no existe una cuenta compatible para la red
+    elegida se RECHAZA con 400 (nunca se recurre a una cuenta de otra red)."""
     if method not in ("transfer", "crypto"):
         return None
-    from services.payment_accounts import (assert_amount_meets_minimum,
-                                           get_active_accounts, pick_account)
+    from services.payment_accounts import (get_active_accounts, pick_account,
+                                           min_required)
     code = (currency.get("code") or "").upper()
-    acc = await assert_amount_meets_minimum(code, amount)
-    if acc:
+    accounts = await get_active_accounts(code)
+    if accounts:
         if method == "crypto" and network:
-            same_net = [a for a in await get_active_accounts(code)
-                        if (a.get("network") or "").upper() == network]
-            acc = pick_account(same_net, amount) or acc
+            net = network.upper()
+            same_net = [a for a in accounts
+                        if (a.get("network") or "").upper() == net]
+            if not same_net:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"No hay una cuenta de cobro configurada para "
+                            f"{code} en la red {net}. Elige otra red "
+                            "disponible o contacta al equipo."))
+            acc = pick_account(same_net, amount)
+            if acc is None:
+                req = min_required(same_net)
+                if req is not None and amount < req:
+                    detail = (f"El monto mínimo para enviar {code} por la red "
+                              f"{net} es {req:g}. Ajusta el monto para continuar.")
+                else:
+                    detail = (f"No hay una cuenta de cobro disponible para ese "
+                              f"monto en {code} por la red {net}. Contacta al "
+                              "equipo.")
+                raise HTTPException(status_code=400, detail=detail)
+            return _account_snapshot(acc)
+        # transfer (o cripto sin red declarada) → escalonado por importe.
+        acc = pick_account(accounts, amount)
+        if acc is None:
+            req = min_required(accounts)
+            if req is not None and amount < req:
+                detail = (f"El monto mínimo para enviar {code} es {req:g}. "
+                          "Ajusta el monto para continuar.")
+            else:
+                detail = (f"No hay una cuenta de cobro disponible para ese "
+                          f"monto en {code}. Contacta al equipo.")
+            raise HTTPException(status_code=400, detail=detail)
         return _account_snapshot(acc)
     legacy = (currency.get("payment_account") or "").strip()
     if legacy:
         return {"id": f"legacy_{code}", "label": code,
-                "account_details": legacy}
+                "account_details": legacy, "network": ""}
     return None
 
 
@@ -434,9 +472,13 @@ async def admin_deposit_payment_account_options(request: Request,
 @router.put("/admin/deposits/{dep_id}/payment-account")
 async def admin_set_deposit_payment_account(
         dep_id: str, payload: DepositPaymentAccountPayload, request: Request) -> Any:
-    """Asigna/corrige la cuenta de cobro de un depósito (incluidos los
-    antiguos sin cuenta registrada) para que Transacciones muestre a qué
-    cuenta de la empresa llegó el dinero."""
+    """CO-02 — registra la cuenta de cobro CONFIRMADA por conciliación (a qué
+    cuenta de la empresa llegó REALMENTE el dinero), con responsable y fecha.
+    No sobrescribe la cuenta PREVISTA (`payment_account_*`) comunicada al
+    cliente al crear el depósito: son dos referencias distintas.
+
+    CO-01 — para depósitos cripto, la cuenta confirmada debe pertenecer a la
+    MISMA red del depósito."""
     staff = await require_permission(request, "withdrawals")
     doc = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     if not doc:
@@ -452,27 +494,43 @@ async def admin_set_deposit_payment_account(
         legacy = ((cur or {}).get("payment_account") or "").strip()
         if not legacy:
             raise HTTPException(status_code=404, detail="Cuenta de cobro no encontrada.")
-        snap = {"id": acc_id, "label": code, "account_details": legacy}
+        snap = {"id": acc_id, "label": code, "account_details": legacy, "network": ""}
     else:
         acc = await db.payment_accounts.find_one(
             {"id": acc_id, "currency_code": code}, {"_id": 0})
         if not acc:
             raise HTTPException(status_code=404,
                                 detail="Cuenta de cobro no encontrada para esa moneda.")
+        # CO-01 — red de la cuenta confirmada = red del depósito cripto.
+        if doc.get("method") == "crypto":
+            dep_net = (doc.get("network") or "").upper()
+            acc_net = (acc.get("network") or "").upper()
+            if dep_net and acc_net and dep_net != acc_net:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(f"La cuenta es de la red {acc_net} pero el depósito "
+                            f"se recibió por {dep_net}. Elige una cuenta de la "
+                            "red correcta."))
         snap = _account_snapshot(acc)
     now = iso(now_utc())
     await db.deposits.update_one({"id": dep_id}, {"$set": {
-        "payment_account_id": snap["id"],
-        "payment_account_label": snap["label"],
-        "payment_account_details": snap["account_details"],
+        "confirmed_account_id": snap["id"],
+        "confirmed_account_label": snap["label"],
+        "confirmed_account_details": snap["account_details"],
+        "confirmed_account_network": snap.get("network") or "",
+        "confirmed_account_at": now,
+        "confirmed_account_by": staff["user_id"],
+        "confirmed_account_by_name": staff.get("name") or staff.get("email") or "",
+        "confirmed_account_note": (payload.note or "").strip() or None,
         "updated_at": now,
     }})
     await log_action(
-        db=db, actor=staff, action="deposit.payment_account_set",
+        db=db, actor=staff, action="deposit.payment_account_confirmed",
         entity_type="deposit", entity_id=dep_id,
-        details={"previous": doc.get("payment_account_label"),
-                 "payment_account_id": snap["id"],
-                 "payment_account_label": snap["label"]},
+        details={"previous": doc.get("confirmed_account_label"),
+                 "confirmed_account_id": snap["id"],
+                 "confirmed_account_label": snap["label"],
+                 "expected_account_label": doc.get("payment_account_label")},
     )
     fresh = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     return fresh
@@ -714,6 +772,7 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
         "payment_account_id": pay_acc.get("id") if pay_acc else None,
         "payment_account_label": pay_acc.get("label") if pay_acc else None,
         "payment_account_details": pay_acc.get("account_details") if pay_acc else None,
+        "payment_account_network": pay_acc.get("network") if pay_acc else None,
         "status": "pending",
         "admin_note": None,
         "reviewed_at": None,

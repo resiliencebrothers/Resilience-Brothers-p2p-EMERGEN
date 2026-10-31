@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
@@ -26,6 +26,8 @@ const STATUS_KEYS = {
 export default function AdminOrders() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [sp] = useSearchParams();
+  const focusId = sp.get("focus");
   const { user: currentUser } = useAuth();
   const isAdmin = currentUser?.role === "admin";
 
@@ -82,6 +84,13 @@ export default function AdminOrders() {
   useEffect(() => { load(); }, [load]);
   // iter159 — new/updated orders appear without F5.
   useLiveRefresh(load, ["order_created", "order_status_changed"], 800);
+
+  // P3 — resalta y desplaza hasta la orden buscada al llegar desde Transacciones.
+  useEffect(() => {
+    if (!focusId || loading) return;
+    const el = document.querySelector(`[data-testid="admin-order-row-${focusId}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusId, loading, orders]);
 
   const openOrder = (o) => {
     setOpen(o);
@@ -146,7 +155,7 @@ export default function AdminOrders() {
         total={total}
       />
 
-      <OrdersTable orders={orders} loading={loading} onOpenOrder={openOrder} />
+      <OrdersTable orders={orders} loading={loading} onOpenOrder={openOrder} focusId={focusId} />
 
       <Pagination
         page={page}

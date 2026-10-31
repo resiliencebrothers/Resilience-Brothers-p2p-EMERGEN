@@ -75,16 +75,20 @@ export function DepositForm({ onSubmitted, showHistory = true, method = "transfe
 
   // Cuenta de cobro de la empresa (transferencia / cripto), escalonada por
   // monto igual que en Cambiar. El backend la fotografía en el depósito.
+  // CO-01 — para cripto se resuelve por moneda + RED + monto, de modo que la
+  // cuenta mostrada siempre pertenece a la red elegida (nunca otra red).
   const needsAccount = method === "transfer" || method === "crypto";
-  const paymentAccount = usePaymentAccount(needsAccount ? currency : "", Number(amount) || 0);
-  const accountNetwork = paymentAccount.account?.network;
-  useEffect(() => {
-    if (method === "crypto" && accountNetwork && CRYPTO_NETWORKS.some((n) => n.value === accountNetwork)) {
-      setNetwork(accountNetwork);
-    }
-  }, [accountNetwork, method]);
+  const paymentAccount = usePaymentAccount(
+    needsAccount ? currency : "",
+    Number(amount) || 0,
+    method === "crypto" ? network : undefined,
+  );
+  // CO-01 — no existe cuenta de cobro para la red elegida.
+  const networkUnavailable = method === "crypto" && paymentAccount.hasTiers
+    && paymentAccount.networkAvailable === false;
   const accountBlocked = needsAccount && paymentAccount.hasTiers
-    && (paymentAccount.belowMin || (!paymentAccount.account && !paymentAccount.loading));
+    && (networkUnavailable || paymentAccount.belowMin
+        || (!paymentAccount.account && !paymentAccount.loading));
 
   const pickProof = async (e) => {
     const f = e.target.files?.[0];
@@ -249,6 +253,11 @@ export function DepositForm({ onSubmitted, showHistory = true, method = "transfe
                   </SelectContent>
                 </Select>
                 <p className="text-[0.65rem] text-neutral-500 mt-1">{t("deposits.networkHint")}</p>
+                {networkUnavailable && (
+                  <p className="text-[0.65rem] text-amber-400 mt-1" data-testid="deposit-network-no-account">
+                    {t("deposits.networkNoAccount", { network })}
+                  </p>
+                )}
               </div>
               <div>
                 <Label className="micro-label text-neutral-500">{t("deposits.hashLabel")}</Label>

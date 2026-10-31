@@ -3,50 +3,140 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
 import { extractCryptoNetwork } from "@/services/delivery_validators";
-import { ArrowDown, ArrowUp, Download, Receipt, X, ExternalLink, Landmark, Wallet, AlertTriangle } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, Receipt, X, ExternalLink, Landmark, Wallet, AlertTriangle, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { OriginBadge } from "./OriginBadge";
 import { originOf } from "./originMeta";
 
 // Cuenta de cobro de la empresa (entradas) + a qué se acreditó (depósitos).
+// CO-02 — cuenta PREVISTA (comunicada al cliente) vs cuenta CONFIRMADA por
+// conciliación. CO-03 — distingue abono acreditado de abono pendiente.
+function AccountRow({ label, value, details, network, testid }) {
+  return (
+    <div>
+      <div className="micro-label text-neutral-500 mb-1 flex items-center gap-1.5">
+        <Landmark className="w-3 h-3" /> {label}
+      </div>
+      <div data-testid={testid}>
+        <div className="text-emerald-400 font-medium flex items-center gap-2 flex-wrap">
+          {value}
+          {network && (
+            <span className="text-[0.6rem] uppercase font-mono text-[#A78BFA] border border-[#8B5CF6]/30 px-1">
+              {network}
+            </span>
+          )}
+        </div>
+        {details && (
+          <pre className="text-xs text-neutral-400 whitespace-pre-wrap font-mono mt-1">{details}</pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AccountAndCreditBlock({ selected, t }) {
   const isDeposit = selected.ref_type === "deposit";
   const showsAccount = selected.direction === "in" && (isDeposit || selected.ref_type === "order");
   if (!showsAccount) return null;
   const needsAccount = isDeposit ? selected.method !== "cash" : true;
+  const verified = !!selected.account_verified;
+  const creditPending = !!selected.credit_pending;
+  const expectedLabel = isDeposit
+    ? t("admin.transactions.expectedAccountLabel")
+    : t("admin.transactions.accountLabel");
   return (
     <div className="border border-white/5 p-4 bg-[#0a0a0a] space-y-3" data-testid="tx-account-block">
-      <div>
-        <div className="micro-label text-neutral-500 mb-1 flex items-center gap-1.5">
-          <Landmark className="w-3 h-3" /> {t("admin.transactions.accountLabel")}
+      {/* Cuenta prevista / comunicada al cliente */}
+      {selected.payment_account_label ? (
+        <AccountRow
+          label={expectedLabel}
+          value={selected.payment_account_label}
+          details={selected.payment_account_details}
+          network={selected.payment_account_network}
+          testid="tx-account-value"
+        />
+      ) : (
+        <div>
+          <div className="micro-label text-neutral-500 mb-1 flex items-center gap-1.5">
+            <Landmark className="w-3 h-3" /> {expectedLabel}
+          </div>
+          {needsAccount ? (
+            <div className="text-xs text-amber-400 flex items-start gap-1.5" data-testid="tx-account-missing">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>
+                {t("admin.transactions.accountMissing")}
+                {isDeposit && ` ${t("admin.transactions.accountMissingDepositHint")}`}
+              </span>
+            </div>
+          ) : (
+            <div className="text-xs text-neutral-500">{t("admin.transactions.accountCashNA")}</div>
+          )}
         </div>
-        {selected.payment_account_label ? (
-          <div data-testid="tx-account-value">
-            <div className="text-emerald-400 font-medium">{selected.payment_account_label}</div>
-            {selected.payment_account_details && (
-              <pre className="text-xs text-neutral-400 whitespace-pre-wrap font-mono mt-1">{selected.payment_account_details}</pre>
+      )}
+
+      {/* CO-02 — cuenta confirmada por conciliación (solo depósitos) */}
+      {isDeposit && needsAccount && (
+        verified ? (
+          <div data-testid="tx-confirmed-account-block">
+            <AccountRow
+              label={t("admin.transactions.confirmedAccountLabel")}
+              value={
+                <span className="inline-flex items-center gap-2 flex-wrap">
+                  {selected.confirmed_account_label}
+                  <span className="inline-flex items-center gap-1 text-[0.6rem] uppercase text-emerald-400 border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5">
+                    <ShieldCheck className="w-3 h-3" /> {t("admin.transactions.accountVerified")}
+                  </span>
+                </span>
+              }
+              details={selected.confirmed_account_details}
+              network={selected.confirmed_account_network}
+              testid="tx-confirmed-account-value"
+            />
+            {(selected.confirmed_account_by_name || selected.confirmed_account_at) && (
+              <div className="text-[0.65rem] text-neutral-500 mt-1" data-testid="tx-confirmed-account-meta">
+                {t("admin.transactions.verifiedBy", {
+                  who: selected.confirmed_account_by_name || "—",
+                  when: selected.confirmed_account_at
+                    ? new Date(selected.confirmed_account_at).toLocaleString()
+                    : "—",
+                })}
+              </div>
             )}
           </div>
-        ) : needsAccount ? (
-          <div className="text-xs text-amber-400 flex items-start gap-1.5" data-testid="tx-account-missing">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span>
-              {t("admin.transactions.accountMissing")}
-              {isDeposit && ` ${t("admin.transactions.accountMissingDepositHint")}`}
-            </span>
-          </div>
         ) : (
-          <div className="text-xs text-neutral-500">{t("admin.transactions.accountCashNA")}</div>
-        )}
-      </div>
+          <div data-testid="tx-account-not-verified">
+            <div className="micro-label text-neutral-500 mb-1 flex items-center gap-1.5">
+              <Landmark className="w-3 h-3" /> {t("admin.transactions.confirmedAccountLabel")}
+            </div>
+            <div className="text-xs text-amber-400 flex items-start gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>{t("admin.transactions.accountNotVerified")}</span>
+            </div>
+          </div>
+        )
+      )}
+
       {isDeposit && (
         <div data-testid="tx-credited-block">
           <div className="micro-label text-neutral-500 mb-1 flex items-center gap-1.5">
             <Wallet className="w-3 h-3" /> {t("admin.transactions.creditedTo")}
           </div>
-          <div className="text-sm text-neutral-200">
-            {t("admin.transactions.creditedToValue", { currency: selected.currency, client: selected.client_name || "—" })}
-          </div>
+          {creditPending ? (
+            <div className="text-sm text-amber-400 flex items-start gap-1.5" data-testid="tx-credit-pending">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>
+                {t("admin.transactions.creditPending", {
+                  currency: selected.currency, client: selected.client_name || "—",
+                })}
+              </span>
+            </div>
+          ) : (
+            <div className="text-sm text-neutral-200" data-testid="tx-credited-value">
+              {t("admin.transactions.creditedToValue", {
+                currency: selected.currency, client: selected.client_name || "—",
+              })}
+            </div>
+          )}
           <div className="text-xs text-neutral-500 mt-1">{t("admin.transactions.noMarginHint")}</div>
         </div>
       )}

@@ -41,15 +41,56 @@ def cleanup():
              "account_details": "ES00 1111 2222 3333", "min_amount": 200.01, "max_amount": None,
              "is_active": True, "created_at": "2026-01-01T00:00:00+00:00",
              "updated_at": "2026-01-01T00:00:00+00:00"}])
+        # Legacy confirmed EUR transfer deposit WITHOUT any collection account
+        # recorded (the "50 EUR" historical case). Used by the assign flow.
+        await db.deposits.update_one(
+            {"id": "dep_legacy_test02"},
+            {"$set": {
+                "id": "dep_legacy_test02", "user_id": "user_test_normal01",
+                "user_email": "normal.test@resilience.com", "user_name": "QA Normal",
+                "user_role": "normal", "currency": "EUR", "amount": 50.0,
+                "method": "transfer", "account_holder": "TEST_legacy",
+                "status": "confirmed", "created_at": "2026-02-01T00:00:00+00:00",
+                "updated_at": "2026-02-01T00:00:00+00:00",
+                "reviewed_at": "2026-02-01T00:00:00+00:00"},
+             "$unset": {"payment_account_id": "", "payment_account_label": "",
+                        "payment_account_details": "", "confirmed_account_id": "",
+                        "confirmed_account_label": "", "credit_pending": ""}},
+            upsert=True)
+        # CO-01 — two USDT accounts on DIFFERENT networks + a confirmed crypto
+        # deposit sent via TRC20, to test network-aware confirmed-account assign.
+        await db.payment_accounts.delete_many({"id": {"$in": ["pa_usdt_trc", "pa_usdt_erc"]}})
+        await db.payment_accounts.insert_many([
+            {"id": "pa_usdt_trc", "currency_code": "USDT", "label": "Wallet TRC20",
+             "account_details": "TRC20-addr", "network": "TRC20", "min_amount": 1,
+             "max_amount": None, "is_active": True,
+             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"},
+            {"id": "pa_usdt_erc", "currency_code": "USDT", "label": "Wallet ERC20",
+             "account_details": "0x-addr", "network": "ERC20", "min_amount": 1,
+             "max_amount": None, "is_active": True,
+             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}])
+        await db.deposits.update_one(
+            {"id": "dep_crypto_trc_test"},
+            {"$set": {
+                "id": "dep_crypto_trc_test", "user_id": "user_test_normal01",
+                "user_email": "normal.test@resilience.com", "user_name": "QA Normal",
+                "user_role": "normal", "currency": "USDT", "amount": 50.0,
+                "method": "crypto", "network": "TRC20", "tx_hash": "0xdeadbeefTRC20test",
+                "status": "confirmed", "created_at": "2026-02-02T00:00:00+00:00",
+                "updated_at": "2026-02-02T00:00:00+00:00",
+                "reviewed_at": "2026-02-02T00:00:00+00:00"},
+             "$unset": {"payment_account_id": "", "confirmed_account_id": "",
+                        "confirmed_account_label": "", "credit_pending": ""}},
+            upsert=True)
     _db_run(_seed)
     yield
     async def _clean(db):
-        await db.payment_accounts.delete_many({"id": {"$in": ["pa_test_eur_a", "pa_test_eur_b"]}})
+        await db.payment_accounts.delete_many({"id": {"$in": ["pa_test_eur_a", "pa_test_eur_b",
+                                                              "pa_usdt_trc", "pa_usdt_erc"]}})
         if CREATED:
             await db.deposits.delete_many({"id": {"$in": CREATED}})
-        # restore dep_legacy_test02 to "no account" so UI assign flow can be tested
-        await db.deposits.update_one({"id": "dep_legacy_test02"}, {"$unset": {
-            "payment_account_id": "", "payment_account_label": "", "payment_account_details": ""}})
+        await db.deposits.delete_one({"id": "dep_legacy_test02"})
+        await db.deposits.delete_one({"id": "dep_crypto_trc_test"})
     _db_run(_clean)
 
 
@@ -123,12 +164,18 @@ class TestAdminAssign:
         assert r.status_code in (401, 403)
 
     def test_assign_legacy02(self):
+        # CO-02 — asignar registra la cuenta CONFIRMADA (conciliada), no la prevista.
         r = requests.put(f"{API}/admin/deposits/dep_legacy_test02/payment-account",
-                         json={"payment_account_id": "pa_test_eur_a"}, headers=ADMIN)
+                         json={"payment_account_id": "pa_test_eur_a",
+                               "note": "conciliado extracto #42"}, headers=ADMIN)
         assert r.status_code == 200, r.text
         d = r.json()
-        assert d["payment_account_label"] == "Revolut RB Europe"
-        assert d["payment_account_id"] == "pa_test_eur_a"
+        assert d["confirmed_account_label"] == "Revolut RB Europe"
+        assert d["confirmed_account_id"] == "pa_test_eur_a"
+        assert d["confirmed_account_by_name"]
+        assert d["confirmed_account_at"]
+        # la cuenta PREVISTA del legado sigue vacía (no se deduce por importe).
+        assert not d.get("payment_account_label")
         assert "_id" not in d
 
     def test_assign_unknown_404(self):
@@ -163,9 +210,13 @@ class TestAdminAssign:
         row = [i for i in items if i["ref_id"] == "dep_legacy_test02"]
         assert row, "dep_legacy_test02 not in transactions"
         row = row[0]
-        assert row["payment_account_label"] == "Revolut RB Europe"
+        # CO-02 — la cuenta confirmada aparece y queda marcada como verificada.
+        assert row["confirmed_account_label"] == "Revolut RB Europe"
+        assert row["account_verified"] is True
         assert row["credited_to"] == "EUR balance"
         assert row["generates_margin"] is False
+        # P4 — identificadores estables presentes.
+        assert "client_user_id" in row and "payment_account_id" in row
 
 
 # Transactions ref_type filter + exports
@@ -203,3 +254,66 @@ class TestTransactionsFilters:
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("application/pdf")
         assert r.content[:4] == b"%PDF"
+
+
+# CO-01 — network-aware confirmed-account assignment for crypto deposits
+class TestCryptoNetworkAssign:
+    def test_assign_wrong_network_422(self):
+        # deposit was received via TRC20; assigning an ERC20 account must fail.
+        r = requests.put(f"{API}/admin/deposits/dep_crypto_trc_test/payment-account",
+                         json={"payment_account_id": "pa_usdt_erc"}, headers=ADMIN)
+        assert r.status_code == 422, r.text
+        assert "red" in r.json()["detail"].lower()
+
+    def test_assign_right_network_200(self):
+        r = requests.put(f"{API}/admin/deposits/dep_crypto_trc_test/payment-account",
+                         json={"payment_account_id": "pa_usdt_trc"}, headers=ADMIN)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["confirmed_account_id"] == "pa_usdt_trc"
+        assert d["confirmed_account_network"] == "TRC20"
+
+    def test_resolve_endpoint_network_filter(self):
+        # same amount, two networks → each returns ITS account, never the other.
+        trc = requests.get(f"{API}/payment-accounts/resolve",
+                           params={"currency": "USDT", "amount": 50, "network": "TRC20"},
+                           headers=NORMAL).json()
+        erc = requests.get(f"{API}/payment-accounts/resolve",
+                           params={"currency": "USDT", "amount": 50, "network": "ERC20"},
+                           headers=NORMAL).json()
+        bep = requests.get(f"{API}/payment-accounts/resolve",
+                           params={"currency": "USDT", "amount": 50, "network": "BEP20"},
+                           headers=NORMAL).json()
+        assert trc["account"]["id"] == "pa_usdt_trc"
+        assert erc["account"]["id"] == "pa_usdt_erc"
+        assert bep["account"] is None and bep["network_available"] is False
+
+
+# CO-03 — confirmed deposit still awaiting the balance credit shows 'pending'
+class TestCreditPendingStatus:
+    def test_credit_pending_surfaced(self):
+        async def _mark(db):
+            await db.deposits.update_one(
+                {"id": "dep_crypto_trc_test"},
+                {"$set": {"credit_pending": {"reason": "test", "at": "now"}}})
+        _db_run(_mark)
+        try:
+            r = requests.get(f"{API}/admin/transactions",
+                             params={"ref_type": "deposit", "currency": "USDT"}, headers=ADMIN)
+            row = [i for i in r.json()["items"] if i["ref_id"] == "dep_crypto_trc_test"][0]
+            assert row["credit_pending"] is True
+            assert row["credit_status"] == "pending"
+            assert row["credited_to"] == ""
+        finally:
+            async def _clear(db):
+                await db.deposits.update_one({"id": "dep_crypto_trc_test"},
+                                             {"$unset": {"credit_pending": ""}})
+            _db_run(_clear)
+
+    def test_credited_when_no_pending(self):
+        r = requests.get(f"{API}/admin/transactions",
+                         params={"ref_type": "deposit", "currency": "USDT"}, headers=ADMIN)
+        row = [i for i in r.json()["items"] if i["ref_id"] == "dep_crypto_trc_test"][0]
+        assert row["credit_pending"] is False
+        assert row["credit_status"] == "credited"
+        assert row["credited_to"] == "USDT balance"

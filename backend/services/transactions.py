@@ -145,9 +145,12 @@ def _order_to_entrada(o: dict) -> TransactionItem:
         "to_code": o.get("to_code", ""),
         "amount_from": float(o.get("amount_from", 0.0)),
         "amount_to": float(o.get("amount_to", 0.0)),
-        # Cuenta de cobro de la empresa a la que el cliente envió el pago.
+        # P5 — cuenta de cobro de la empresa a la que el cliente envió el pago.
+        # Se transmiten el ID estable + la etiqueta + los detalles (instantánea
+        # tomada al crear la orden).
+        "payment_account_id": o.get("payment_account_id") or "",
         "payment_account_label": o.get("payment_account_label") or "",
-        "payment_account_details": "",
+        "payment_account_details": o.get("payment_account_details") or "",
     }
 
 
@@ -606,10 +609,19 @@ async def _fetch_vip_batch_items(
 def _deposit_to_entrada(d: dict) -> TransactionItem:
     """iter113 — confirmed client deposit → inbound company transaction.
     Un depósito acredita el saldo del cliente en la MISMA moneda: no genera
-    margen; la cuenta de cobro queda en `payment_account_*`."""
+    margen.
+
+    CO-02 — se exponen DOS cuentas distintas: la PREVISTA (`payment_account_*`,
+    comunicada al cliente al crear) y la CONFIRMADA por conciliación
+    (`confirmed_account_*`, a dónde llegó realmente el dinero). `account_verified`
+    indica si la recepción ya fue conciliada.
+    CO-03 — `credit_status` distingue 'pending' (confirmado pero el abono al
+    saldo aún no se completó) de 'credited'."""
     mode = d.get("cash_mode")
     details = f"Depósito {d.get('method', '')}" + (f" ({mode})" if mode else "")
     currency = d.get("currency", "")
+    confirmed_label = d.get("confirmed_account_label") or ""
+    credit_pending = bool(d.get("credit_pending"))
     return {
         "direction": "in",
         "currency": currency,
@@ -617,6 +629,8 @@ def _deposit_to_entrada(d: dict) -> TransactionItem:
         "holder_name": d.get("account_holder") or d.get("contact_name") or d.get("user_name", ""),
         "client_name": d.get("user_name", ""),
         "client_email": d.get("user_email", ""),
+        # P4 — identificadores estables (no solo nombre/etiqueta).
+        "client_user_id": d.get("user_id") or "",
         "method": d.get("method", ""),
         "status": d.get("status", ""),
         "ref_id": d.get("id", ""),
@@ -628,9 +642,23 @@ def _deposit_to_entrada(d: dict) -> TransactionItem:
         "cash_mode": mode or "",
         "crypto_network": d.get("network") or "",
         "tx_hash": d.get("tx_hash") or "",
+        # Cuenta PREVISTA (comunicada al cliente al crear el depósito).
+        "payment_account_id": d.get("payment_account_id") or "",
         "payment_account_label": d.get("payment_account_label") or "",
         "payment_account_details": d.get("payment_account_details") or "",
-        "credited_to": f"{currency} balance" if currency else "",
+        "payment_account_network": d.get("payment_account_network") or "",
+        # Cuenta CONFIRMADA por conciliación (dónde llegó realmente el dinero).
+        "confirmed_account_id": d.get("confirmed_account_id") or "",
+        "confirmed_account_label": confirmed_label,
+        "confirmed_account_details": d.get("confirmed_account_details") or "",
+        "confirmed_account_network": d.get("confirmed_account_network") or "",
+        "confirmed_account_at": d.get("confirmed_account_at") or "",
+        "confirmed_account_by_name": d.get("confirmed_account_by_name") or "",
+        "account_verified": bool(confirmed_label),
+        # CO-03 — estado contable del abono al saldo.
+        "credit_pending": credit_pending,
+        "credit_status": "pending" if credit_pending else "credited",
+        "credited_to": "" if credit_pending else (f"{currency} balance" if currency else ""),
         "generates_margin": False,
     }
 

@@ -38,6 +38,15 @@ export const FALLBACK_ORIGIN = {
 
 export const originOf = (refType) => ORIGIN[refType] || FALLBACK_ORIGIN;
 
+// P3 — navega al REGISTRO exacto, no solo al módulo: adjunta el ref_id como
+// parámetro `focus` que la página destino usa para resaltar la fila.
+export const routeForTx = (tx) => {
+  const base = originOf(tx?.ref_type).route;
+  if (!tx?.ref_id) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}focus=${encodeURIComponent(tx.ref_id)}`;
+};
+
 // Valor del filtro «Origen» → lista de ref_type que entiende el backend.
 export const ORIGIN_FILTERS = {
   all: "",

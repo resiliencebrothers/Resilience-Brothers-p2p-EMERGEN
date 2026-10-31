@@ -12,7 +12,7 @@ import { TransactionsFilters } from "./transactions/TransactionsFilters";
 import { TransactionsTable } from "./transactions/TransactionsTable";
 import { TransactionDetailModal } from "./transactions/TransactionDetailModal";
 import { SectionsLegend } from "./transactions/SectionsLegend";
-import { ORIGIN_FILTERS, originOf } from "./transactions/originMeta";
+import { ORIGIN_FILTERS, routeForTx } from "./transactions/originMeta";
 
 const PAGE_SIZE = 50;
 
@@ -138,7 +138,7 @@ export default function AdminTransactions() {
 
   const goToSource = (tx) => {
     setSelected(null);
-    navigate(originOf(tx.ref_type).route);
+    navigate(routeForTx(tx));
   };
 
   return (

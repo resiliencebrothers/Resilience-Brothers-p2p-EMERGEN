@@ -65,6 +65,9 @@ class Order(BaseModel):
     # to send funds to (resolved by amount at creation time).
     payment_account_id: str = ""
     payment_account_label: str = ""
+    # P5 — también se fotografían los datos de la cuenta (no solo la etiqueta)
+    # para que Transacciones muestre a dónde envió el cliente el pago.
+    payment_account_details: str = ""
     # iter173 §61 — reference the client can include in the bank transfer
     # concept; exact match in the statement = high-confidence signal (+20).
     payment_reference: str = Field(default_factory=generate_payment_reference)

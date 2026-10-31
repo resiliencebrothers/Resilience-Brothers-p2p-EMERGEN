@@ -159,15 +159,17 @@ def _assert_range(payload: PaymentAccountCreate) -> None:
 @router.get("/payment-accounts/resolve")
 async def resolve_payment_account(
     request: Request, currency: str, amount: float = 0.0,
+    network: Optional[str] = None,
 ) -> Any:
     await require_user(request)
-    res = await resolve_for_amount(currency, amount)
+    res = await resolve_for_amount(currency, amount, network)
     acc = res["account"]
     return {
         "currency_code": res["currency_code"],
         "has_tiers": res["has_tiers"],
         "min_required": res["min_required"],
         "below_min": res["below_min"],
+        "network_available": res["network_available"],
         "account": ({
             "id": acc["id"],
             "label": acc.get("label", ""),

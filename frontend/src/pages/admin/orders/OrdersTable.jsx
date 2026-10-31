@@ -23,7 +23,7 @@ const STATUS_KEYS = {
  * Paged table listing pending/approved/completed/rejected orders.
  * Emits `onOpenOrder(order)` when the operator clicks the eye icon.
  */
-export default function OrdersTable({ orders, loading, onOpenOrder }) {
+export default function OrdersTable({ orders, loading, onOpenOrder, focusId }) {
   const { t } = useTranslation();
   return (
     <div className="tactile-card overflow-hidden">
@@ -58,7 +58,7 @@ export default function OrdersTable({ orders, loading, onOpenOrder }) {
               </tr>
             )}
             {orders.map((o) => (
-              <OrdersTableRow key={o.id} order={o} onOpen={() => onOpenOrder(o)} />
+              <OrdersTableRow key={o.id} order={o} onOpen={() => onOpenOrder(o)} focused={o.id === focusId} />
             ))}
           </tbody>
         </table>
@@ -67,7 +67,7 @@ export default function OrdersTable({ orders, loading, onOpenOrder }) {
   );
 }
 
-function OrdersTableRow({ order: o, onOpen }) {
+function OrdersTableRow({ order: o, onOpen, focused }) {
   const { t } = useTranslation();
   let networkBadge = null;
   if (o.delivery_method === "crypto") {
@@ -86,7 +86,7 @@ function OrdersTableRow({ order: o, onOpen }) {
     }
   }
   return (
-    <tr className="border-b border-white/5 hover:bg-white/5">
+    <tr className={`border-b border-white/5 hover:bg-white/5${focused ? " ring-2 ring-[#8B5CF6] ring-inset bg-[#8B5CF6]/5" : ""}`} data-testid={`admin-order-row-${o.id}`}>
       <td className="px-3 py-3 font-mono text-xs">{o.id.slice(0, 6)}</td>
       <td className="px-3 py-3">{o.user_name}</td>
       <td className="px-3 py-3"><span className="text-xs uppercase">{o.user_role}</span></td>
