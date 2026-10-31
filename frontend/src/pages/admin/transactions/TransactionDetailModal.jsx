@@ -61,13 +61,19 @@ function AccountAndCreditBlock({ selected, t }) {
             <Landmark className="w-3 h-3" /> {expectedLabel}
           </div>
           {needsAccount ? (
-            <div className="text-xs text-amber-400 flex items-start gap-1.5" data-testid="tx-account-missing">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-              <span>
-                {t("admin.transactions.accountMissing")}
-                {isDeposit && ` ${t("admin.transactions.accountMissingDepositHint")}`}
-              </span>
-            </div>
+            isDeposit && verified ? (
+              <div className="text-xs text-neutral-500" data-testid="tx-account-missing">
+                {t("admin.transactions.expectedNotCommunicated")}
+              </div>
+            ) : (
+              <div className="text-xs text-amber-400 flex items-start gap-1.5" data-testid="tx-account-missing">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>
+                  {t("admin.transactions.accountMissing")}
+                  {isDeposit && ` ${t("admin.transactions.accountMissingDepositHint")}`}
+                </span>
+              </div>
+            )
           ) : (
             <div className="text-xs text-neutral-500">{t("admin.transactions.accountCashNA")}</div>
           )}

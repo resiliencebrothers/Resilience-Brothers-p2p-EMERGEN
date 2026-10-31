@@ -2453,6 +2453,7 @@
       "accountMissingDepositHint": "Confírmala desde Depósitos y Retiros → Depósitos → «Confirmar cuenta».",
       "accountCashNA": "Efectivo: no aplica cuenta de cobro.",
       "expectedAccountLabel": "Cuenta prevista (comunicada al cliente)",
+      "expectedNotCommunicated": "No se comunicó una cuenta prevista al crear; se confirmó después por conciliación.",
       "confirmedAccountLabel": "Cuenta confirmada (conciliación)",
       "accountVerified": "Verificada",
       "accountNotVerified": "Sin verificar — aún no se concilió a qué cuenta llegó el dinero.",

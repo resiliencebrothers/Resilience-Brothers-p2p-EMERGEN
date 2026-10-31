@@ -2453,6 +2453,7 @@
       "accountMissingDepositHint": "Confirm it from Deposits & Withdrawals → Deposits → “Confirm account”.",
       "accountCashNA": "Cash: no collection account applies.",
       "expectedAccountLabel": "Expected account (shared with the client)",
+      "expectedNotCommunicated": "No expected account was shared at creation; it was confirmed later by reconciliation.",
       "confirmedAccountLabel": "Confirmed account (reconciliation)",
       "accountVerified": "Verified",
       "accountNotVerified": "Not verified — the account the money actually arrived in hasn't been reconciled yet.",

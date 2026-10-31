@@ -24,7 +24,7 @@ const DEPOSIT_EVENTS = ["deposit_created"];
 
 export default function AdminDeposits({ onChanged }) {
   const { t } = useTranslation();
-  const [sp] = useSearchParams();
+  const [sp, setSp] = useSearchParams();
   const focusId = sp.get("focus");
   const [focusActive, setFocusActive] = useState(!!focusId);
   const [items, setItems] = useState([]);
@@ -167,7 +167,13 @@ export default function AdminDeposits({ onChanged }) {
           <span>{t("adminDeposits.focusBanner")}</span>
           <button
             type="button"
-            onClick={() => { setFocusActive(false); setStatusFilter("pending"); }}
+            onClick={() => {
+              setFocusActive(false);
+              setStatusFilter("pending");
+              const next = new URLSearchParams(sp);
+              next.delete("focus");
+              setSp(next, { replace: true });
+            }}
             data-testid="deposits-focus-clear"
             className="uppercase tracking-widest text-[#8B5CF6] hover:underline"
           >

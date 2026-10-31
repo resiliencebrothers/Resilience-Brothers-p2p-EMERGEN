@@ -1,0 +1,31 @@
+{
+  "summary": "Focused frontend retest of iteration_385 fixes. All 5 items PASS. (1) P3 ORDER focus: Transactions -> ORDER_PAYOUT row f891ce3c (completed, older than first 60 orders) -> 'Go to Orders' -> /admin/orders?focus=f891ce3c-...; row admin-order-row-<id> fetched by id and pinned at index 0 (51 rows), violet ring, in viewport, still there after 8s live refresh; ?focus=<unknown> fails silently with normal 50 rows. (2) AdminDeposits focus mode: deposits-focus-banner shown ('Mostrando el depósito abierto desde Transacciones (todos los estados).' + QUITAR FOCO), no status chip active, dep_seed_legacy row ringed; Clear focus removes banner and restores 'pending' chip/filter. (3) accountMissingDepositHint now references 'Confirm account' (EN) / 'Confirmar cuenta' (ES). (4) DepositForm USDT+BEP20: payment-account-network-none renders INSIDE deposit-destination-account with deposits.networkNoAccount; deposit-network-no-account also shown; submit disabled. TRC20 shows 'Seed Wallet TRC20' / TSeedAddr111, and submit is enabled once a valid hash is entered. (5) CO-02 regression: assign dialog listed only pa_seed_eur; save showed toast 'Cuenta receptora confirmada'; after reload the Confirmed line shows Seed Revolut EUR with a shield + 'Cambiar'; Transactions detail shows CONFIRMED account VERIFIED + 'Verificada por QA Admin · <ts>', and Expected still 'not recorded'. DB check: only confirmed_account_* written, no payment_account_* back-fill.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AdminDeposits focus clear", "issues": ["'Quitar foco' resets local state but leaves ?focus=<id> in the URL. If the user switches to a status that includes the deposit (e.g. Confirmados), the row is still highlighted, and reloading the page turns focus mode back on. Remove the focus param from the URL with setSearchParams on clear."]},
+      {"screen": "Transaction detail (deposit with confirmed account but no expected account)", "issues": ["The expected-account hint still says 'Confírmala desde ... «Confirmar cuenta»' even after the account has been confirmed (the VERIFIED block is just below). When confirmed_account_id exists, show a softer text such as 'Not communicated to the client; confirmed later by reconciliation'."]},
+      {"screen": "AdminOrders focus", "issues": ["Unlike Deposits, there is no focus banner or clear action. The pinned order sits on top of the 'ALL' list with no explanation of why it is first. Optional: reuse the banner pattern."]},
+      {"screen": "DepositForm BEP20", "issues": ["The same networkNoAccount sentence appears twice (in the destination box and under the network select). This matches the requested spec, but it is redundant. Optional: keep only the destination-box message, or use a shorter hint under the select."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional/minor: on deposits-focus-clear, also remove the 'focus' search param so the highlight does not persist and reload does not turn focus mode back on.",
+    "Optional/minor: change the expected-account 'not recorded' hint when a confirmed account already exists.",
+    "Optional: add a focus banner/clear action on AdminOrders to match Deposits."
+  ],
+  "critical_code_review_comments": [
+    "AdminOrders.jsx: the scrollIntoView effect depends on [orders], so every live refresh (order_created / order_status_changed) scrolls the page back to the focused row while the admin is browsing. Scroll only once, e.g. with a ref flag.",
+    "AdminOrders.jsx: the fetch-by-id effect runs again after every load() that replaces orders (the pinned order is dropped and fetched again). It works, but it makes an extra GET on each live refresh; consider caching the focused order in a ref.",
+    "AdminDeposits focus mode still depends on the list containing the deposit (limit=300 noted in iteration_385); a fetch-by-id like the one for orders is not implemented yet."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped as requested)", "frontend": "100% (5/5 requested items)"},
+  "seed_data_creation": "Re-ran /app/backend/seed_co_fixes_smoke.py before testing. dep_seed_legacy now HAS confirmed_account_id=pa_seed_eur (note 'TEST_ retest 386'); re-run the seed to reset it.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Admin cookie test_session_admin_X, normal test_session_normal_X. dep_seed_legacy is not on page 1 of /admin/transactions: pick EUR in the tx-currency-filter Select to find tx-row-dep_seed_legacy. Order f891ce3c-e13b-440e-83a2-e50e9cf63c5d (ORDER_PAYOUT) is row 6 in Transactions and far down in Orders, which makes it good for focus tests. Client deposit: /dashboard/vip -> action-deposit-btn -> method-option-crypto -> deposit-currency USDT -> deposit-network (TRC20/BEP20)."
+}

@@ -1,3 +1,18 @@
+## Changelog — 31 Oct 2026 (Auditoría Resilience b453da7 — CO-01/CO-02/CO-03 + P3/P4/P5)
+
+Dictamen de auditoría "Resilience" (clasificación/trazabilidad de operaciones). El usuario pidió "corregir los errores". Implementado y verificado (pytest 23/23 en `test_iter384_deposit_collection_account.py`, test directo `manual_co01_network_resolution.py` PASS, frontend E2E ES/EN 100% en iteration_385/386).
+
+- **CO-01 (ALTA) — cuenta cripto de red incompatible**: `_resolve_deposit_payment_account` (`routes/deposits.py`) ahora resuelve ESTRICTAMENTE moneda+red+importe. Si no hay cuenta para la red elegida → **400** (nunca cae a otra red). La red se guarda en la instantánea (`_account_snapshot` incluye `network`; el depósito guarda `payment_account_network`). `resolve_for_amount(network)` + endpoint `/payment-accounts/resolve?network=` + `usePaymentAccount(network)`: el formulario del cliente resuelve por red y bloquea con `deposits.networkNoAccount` cuando no hay cuenta. La asignación admin valida red (422 si no coincide con la red del depósito cripto).
+- **CO-02 (MEDIA) — cuenta prevista vs cuenta confirmada**: ya NO se sobrescribe `payment_account_*` (cuenta PREVISTA, comunicada al cliente, inmutable). El endpoint `PUT /admin/deposits/{id}/payment-account` ahora escribe `confirmed_account_*` + `confirmed_account_at/by/by_name/note` (conciliación con responsable+fecha+evidencia). `_deposit_to_entrada` expone ambas + `account_verified`. UI: detalle de Transacciones y fila de Depósitos muestran Prevista y Confirmada (badge verificada / "sin verificar"); diálogo renombrado a "Confirmar cuenta receptora" con nota. Para legados NO se deduce la cuenta prevista por importe.
+- **CO-03 (MEDIA) — abono pendiente**: `_deposit_to_entrada` expone `credit_pending` + `credit_status` ('pending'/'credited'); `credited_to` vacío mientras el abono no se aplica. El detalle de Transacciones muestra "PENDIENTE de acreditar" en vez de darlo por acreditado.
+- **P3 — navegación al registro exacto**: `routeForTx` adjunta `?focus=<ref_id>`. `AdminDeposits` (muestra todos los estados en modo foco, banner + "quitar foco" que limpia el param) y `AdminOrders` (nuevo `GET /admin/orders/{id}` para traer y fijar la orden fuera de página) resaltan la fila y hacen scroll.
+- **P4/P5 — identificadores estables**: `_deposit_to_entrada` incluye `client_user_id` y `payment_account_id`; `_order_to_entrada` ahora transmite `payment_account_id` y `payment_account_details` (modelo Order guarda `payment_account_details`, seteado al crear). CSV de Transacciones usa `confirmed_account_label or payment_account_label`.
+- **Pendientes del plan NO modificados (decisión de dueño documentada)**: el historial personal excluye depósitos/retiros (iter115) y las conversiones son personales — intencional. 3 tests RBAC (empleado perms vacías 200-vs-403) siguen fallando por expectativa desactualizada; la auditoría dice NO debilitar permisos → sin cambios.
+- **Seeds/credenciales**: `python /app/backend/seed_co_fixes_smoke.py` (idempotente). Documentado en `test_credentials.md`.
+- **Despliegue**: en PREVIEW. Requiere **volver a publicar** para producción.
+
+
+
 ## Changelog — 30 Oct 2026 (Login: aviso de contraseña ilegible en modo claro + diálogo no traducía a inglés)
 
 Reporte del usuario (foto): (1) el aviso "Correo o contraseña incorrectos" se ve **borroso** y (2) al elegir **inglés** antes de entrar, el diálogo de login y el mensaje de error **seguían en español**.
