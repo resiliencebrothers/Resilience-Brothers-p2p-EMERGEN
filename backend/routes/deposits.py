@@ -402,7 +402,7 @@ async def _resolve_deposit_payment_account(currency: dict, method: str,
         return _account_snapshot(acc)
     legacy = (currency.get("payment_account") or "").strip()
     if legacy:
-        return {"id": f"legacy_{code}", "label": f"Cuenta {code}",
+        return {"id": f"legacy_{code}", "label": code,
                 "account_details": legacy}
     return None
 
@@ -425,7 +425,7 @@ async def admin_deposit_payment_account_options(request: Request,
     cur = await db.currencies.find_one({"code": code}, {"_id": 0, "payment_account": 1})
     legacy = ((cur or {}).get("payment_account") or "").strip()
     if legacy:
-        items.append({"id": f"legacy_{code}", "label": f"Cuenta {code}",
+        items.append({"id": f"legacy_{code}", "label": code,
                       "account_details": legacy, "network": "",
                       "min_amount": None, "max_amount": None})
     return {"items": items}
@@ -452,7 +452,7 @@ async def admin_set_deposit_payment_account(
         legacy = ((cur or {}).get("payment_account") or "").strip()
         if not legacy:
             raise HTTPException(status_code=404, detail="Cuenta de cobro no encontrada.")
-        snap = {"id": acc_id, "label": f"Cuenta {code}", "account_details": legacy}
+        snap = {"id": acc_id, "label": code, "account_details": legacy}
     else:
         acc = await db.payment_accounts.find_one(
             {"id": acc_id, "currency_code": code}, {"_id": 0})

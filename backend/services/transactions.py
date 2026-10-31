@@ -625,6 +625,7 @@ def _deposit_to_entrada(d: dict) -> TransactionItem:
         "proof_image": d.get("proof_url", "") or "",
         "delivery_details": details,
         "admin_note": d.get("admin_note") or "",
+        "cash_mode": mode or "",
         "crypto_network": d.get("network") or "",
         "tx_hash": d.get("tx_hash") or "",
         "payment_account_label": d.get("payment_account_label") or "",

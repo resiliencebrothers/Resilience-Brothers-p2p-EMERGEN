@@ -2562,7 +2562,8 @@
       "proofTransfer": "Comprobante de transferencia",
       "download": "Descargar",
       "noProof": "Sin comprobante adjunto",
-      "outNoProof": "Las salidas no tienen comprobante de transferencia entrante (son pagos de la plataforma al cliente)."
+      "outNoProof": "Las salidas no tienen comprobante de transferencia entrante (son pagos de la plataforma al cliente).",
+      "depositDetails": "Depósito por {{method}}{{mode}}"
     }
   },
   "adminOverview": {

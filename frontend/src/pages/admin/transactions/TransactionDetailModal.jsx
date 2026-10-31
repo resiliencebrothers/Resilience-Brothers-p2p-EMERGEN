@@ -156,7 +156,12 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
               </div>
               <div className="text-sm text-neutral-300">
                 <CopyableText
-                  value={selected.delivery_details}
+                  value={selected.ref_type === "deposit"
+                    ? t("admin.transactions.depositDetails", {
+                      method: t(`deposits.method.${selected.method}`, selected.method),
+                      mode: selected.cash_mode ? ` (${t(`deposits.cashMode.${selected.cash_mode}`, selected.cash_mode)})` : "",
+                    })
+                    : selected.delivery_details}
                   label={t("admin.transactions.copy")}
                   toastMessage={
                     selected.method === "crypto" ? t("admin.transactions.walletCopied") : t("admin.transactions.dataCopied")

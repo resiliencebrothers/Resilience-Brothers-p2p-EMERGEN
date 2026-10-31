@@ -2562,7 +2562,8 @@
       "proofTransfer": "Transfer proof",
       "download": "Download",
       "noProof": "No proof attached",
-      "outNoProof": "Outflows have no incoming transfer proof (they are platform payments to the client)."
+      "outNoProof": "Outflows have no incoming transfer proof (they are platform payments to the client).",
+      "depositDetails": "Deposit via {{method}}{{mode}}"
     }
   },
   "adminOverview": {

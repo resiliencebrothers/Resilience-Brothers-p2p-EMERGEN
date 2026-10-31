@@ -1,0 +1,39 @@
+{
+  "summary": "Tested the deposit collection-account feature from end to end. Covered: the account snapshot saved when a client creates a deposit (tiered by amount), the payment_account field in /deposits/config, the admin endpoints that list and assign the account, the Transactions ref_type filter, and the CSV/PDF exports. On the UI side: /admin/transactions (legend, Origin and Collection account columns, origin filter, detail modal for deposit, crypto and order rows), /admin/withdrawals?tab=deposits (assign dialog), the /admin/orders subtitle, the client deposit form (account block, minimum gate, tier switch, submit) and the client deposit detail dialog. Every flow was checked in ES and EN at 1920 and 390 widths. All requested behaviour works. No raw i18n keys, no console errors and no horizontal overflow were found. A few minor translation leaks come from Spanish strings hardcoded in the backend.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/admin/transactions (services/transactions.py _deposit_to_entrada)", "issue": "delivery_details is hardcoded in Spanish ('Depósito transfer', 'Depósito cash (office)') and includes the raw method code. The EN modal therefore shows 'SENDER DETAILS: Depósito transfer'. Return a structured value and translate it on the frontend."},
+      {"endpoint": "GET /api/admin/deposits/payment-account-options and _resolve_deposit_payment_account", "issue": "The fallback account label is hardcoded as f'Cuenta {code}' (for example 'Cuenta USDT'), so it shows in Spanish in the EN assign dialog and in the EN Transactions column."},
+      {"endpoint": "PUT /api/admin/deposits/{id}/payment-account", "issue": "For crypto deposits it does not check that the account's network matches the deposit network, and it allows assignment on pending or rejected deposits. Acceptable, but worth a guard."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin transaction detail modal (ES)", "issues": ["METHOD 'TRANSFER' and STATUS 'CONFIRMED' are shown as raw uppercase enum values even in ES. These are probably not new strings, but they are not translated."]},
+      {"screen": "/admin/transactions filters", "issues": ["The From/To date filters use the native browser date picker (mm/dd/yyyy) instead of a shadcn Calendar. This existed before this feature."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter384_deposit_collection_account.py",
+    "/app/test_reports/pytest/iter384.xml",
+    "/app/test_reports/pytest/iter384_regression.xml"
+  ],
+  "action_items": [
+    "Optional: translate the deposit delivery_details/method in the admin transaction modal (replace the backend-built 'Depósito transfer' string).",
+    "Optional: make the fallback account label 'Cuenta {code}' language-neutral or translated.",
+    "Optional: translate the method/status enum values in the transaction detail modal."
+  ],
+  "critical_code_review_comments": [
+    "tests/conftest.py _isolate_payment_account_config deletes ALL payment_accounts for the whole pytest session. Any test of tiered deposit snapshots must re-seed its own accounts. The new iter384 test does this in a module fixture. Without it, a 5 EUR deposit is accepted (no tiers means no minimum), which caused junk deposits during my first run. I cleaned those up.",
+    "AdminDeposits only shows the account line when method !== 'cash'. This is correct: cash rows have no line and the API returns 422 for them."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter384_deposit_collection_account.py"],
+  "success_rate": {"backend": "100% (18/18 new). Regression: 75 passed, 1 skipped, 3 known employee-access failures in test_transactions_registry.py", "frontend": "100% of requested flows"},
+  "seed_data_creation": "A UI submit created one 50 EUR pending deposit dep_c8a159344514 for user_test_normal01; it snapshotted Revolut RB Europe. Pytest-created deposits (account_holder TEST_dayeiry) are deleted in teardown. dep_legacy_test02 was assigned BBVA Empresa through the UI and then reset to no account in the DB, so the assign flow can be retested. pa_test_eur_a/b are still present. Admin preferred_language is still 'en'. The normal client's preferred_language was set back to 'es'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Language switchers: admin-lang-switcher (AdminPanel) and dashboard-lang-switcher (client); the label shows the target language and the choice is synced to the server. The client deposit history is in account-history-btn -> history-tab-deposits -> deposit-row-<id> -> deposit-detail-account-<id>. EUR currency SelectItems have no data-testid (use role=option name ^EUR). Run tests with REACT_APP_BACKEND_URL exported."
+}
