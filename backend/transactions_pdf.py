@@ -70,6 +70,15 @@ def _t(key: str, lang: str) -> str:
         "col_client": ("Cliente", "Client"),
         "col_method": ("Método", "Method"),
         "col_id": ("ID", "ID"),
+        "col_origin": ("Origen", "Origin"),
+        "origin_order": ("Orden de cambio", "Exchange order"),
+        "origin_order_payout": ("Pago de orden", "Order payout"),
+        "origin_withdrawal": ("Retiro de saldo", "Balance withdrawal"),
+        "origin_deposit": ("Depósito de saldo", "Balance deposit"),
+        "origin_company_adjustment": ("Fondo empresa", "Company fund"),
+        "origin_company_withdrawal": ("Retiro del fondo", "Fund withdrawal"),
+        "origin_vip_batch_item": ("Lote VIP", "VIP batch"),
+        "origin_conversion": ("Conversión", "Conversion"),
         "row_in": ("↓ ENTRADA", "↓ INFLOW"),
         "row_out": ("↑ SALIDA", "↑ OUTFLOW"),
     }
@@ -166,16 +175,18 @@ def _build_totals_paragraph(totals: dict, style: ParagraphStyle, lang: str) -> P
 
 
 def _format_entry_row(e: dict, lang: str) -> list[str]:
-    """Convert one transaction entry into a table row (8 cols)."""
+    """Convert one transaction entry into a table row (9 cols)."""
     try:
         ts = datetime.fromisoformat(e.get("created_at", "")).strftime("%Y-%m-%d %H:%M")
     except Exception:
         ts = e.get("created_at", "—")
     is_in = e.get("direction") == "in"
     tipo = _t("row_in", lang) if is_in else _t("row_out", lang)
+    origin = _t(f"origin_{e.get('ref_type', '')}", lang) or (e.get("ref_type") or "—")
     return [
         ts,
         tipo,
+        origin,
         e.get("currency", "—"),
         f"{e.get('amount', 0):,.2f}",
         (e.get("holder_name") or "—")[:30],
@@ -188,15 +199,15 @@ def _format_entry_row(e: dict, lang: str) -> list[str]:
 def _build_transactions_table(entries: list, lang: str) -> Table:
     """Assemble the full transactions table with directional colouring on `Tipo`."""
     headers = [
-        _t("col_date", lang), _t("col_type", lang), _t("col_currency", lang),
-        _t("col_amount", lang), _t("col_holder", lang), _t("col_client", lang),
-        _t("col_method", lang), _t("col_id", lang),
+        _t("col_date", lang), _t("col_type", lang), _t("col_origin", lang),
+        _t("col_currency", lang), _t("col_amount", lang), _t("col_holder", lang),
+        _t("col_client", lang), _t("col_method", lang), _t("col_id", lang),
     ]
     data = [headers] + [_format_entry_row(e, lang) for e in entries]
     if len(data) == 1:
-        data.append(["—"] * 8)
+        data.append(["—"] * 9)
 
-    col_widths = [1.1*inch, 0.9*inch, 0.7*inch, 1.0*inch, 1.9*inch, 1.6*inch, 0.9*inch, 0.7*inch]
+    col_widths = [1.1*inch, 0.85*inch, 1.1*inch, 0.65*inch, 0.95*inch, 1.75*inch, 1.5*inch, 0.8*inch, 0.65*inch]
     tbl = Table(data, colWidths=col_widths, repeatRows=1)
     style: list = [
         ("BACKGROUND", (0, 0), (-1, 0), PANEL),
@@ -213,7 +224,7 @@ def _build_transactions_table(entries: list, lang: str) -> Table:
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+        ("ALIGN", (4, 1), (4, -1), "RIGHT"),
     ]
     for row_idx, entry in enumerate(entries, start=1):
         color = GREEN if entry.get("direction") == "in" else RED

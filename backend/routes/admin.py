@@ -1720,6 +1720,7 @@ class TxnFilters:
         min_amount: Optional[float] = None,
         max_amount: Optional[float] = None,
         client: Optional[str] = None,
+        ref_type: Optional[str] = None,
     ):
         _validate_txn_filters(direction, min_amount, max_amount)
         self.direction = direction
@@ -1730,12 +1731,13 @@ class TxnFilters:
         self.min_amount = min_amount
         self.max_amount = max_amount
         self.client = client
+        self.ref_type = ref_type
 
     async def build_items(self) -> list:
         return await build_transactions(
             self.direction, self.currency, self.holder,
             self.since, self.until, self.min_amount, self.max_amount,
-            client=self.client,
+            client=self.client, ref_type=self.ref_type,
         )
 
     def as_dict(self) -> dict:
@@ -1748,6 +1750,7 @@ class TxnFilters:
             "min_amount": self.min_amount,
             "max_amount": self.max_amount,
             "client": self.client,
+            "ref_type": self.ref_type,
         }
 
 
@@ -1786,7 +1789,8 @@ async def export_transactions_csv(
     writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
     writer.writerow(["created_at", "direction", "currency", "amount",
                      "holder_name", "client_name", "client_email",
-                     "method", "status", "ref_type", "ref_id"])
+                     "method", "status", "ref_type", "ref_id",
+                     "payment_account"])
     for it in items:
         writer.writerow([
             it.get("created_at", ""),
@@ -1800,6 +1804,7 @@ async def export_transactions_csv(
             it.get("status", ""),
             it.get("ref_type", ""),
             it.get("ref_id", ""),
+            it.get("payment_account_label", ""),
         ])
     buf = BytesIO()
     buf.write(text_buf.getvalue().encode("utf-8-sig"))

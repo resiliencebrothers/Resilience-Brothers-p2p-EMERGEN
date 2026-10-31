@@ -14,6 +14,8 @@ import { useLiveEvent } from "@/hooks/useLiveStream";
 import { fileToDataUrl, isImageTooLarge } from "@/utils/fileToDataUrl";
 import { CRYPTO_NETWORKS } from "@/services/cryptoValidators";
 import { DepositDetailDialog } from "./DepositDetailDialog";
+import { usePaymentAccount } from "@/hooks/usePaymentAccount";
+import PaymentAccountBlock from "@/pages/dashboard/exchange/PaymentAccountBlock";
 
 /**
  * iter153 — Method-first client deposit form ("Depósitos y Retiros").
@@ -71,6 +73,19 @@ export function DepositForm({ onSubmitted, showHistory = true, method = "transfe
     ? (usdtEq != null && usdtEq > (config?.courier_min_usdt || 1000) ? "courier" : "office")
     : null;
 
+  // Cuenta de cobro de la empresa (transferencia / cripto), escalonada por
+  // monto igual que en Cambiar. El backend la fotografía en el depósito.
+  const needsAccount = method === "transfer" || method === "crypto";
+  const paymentAccount = usePaymentAccount(needsAccount ? currency : "", Number(amount) || 0);
+  const accountNetwork = paymentAccount.account?.network;
+  useEffect(() => {
+    if (method === "crypto" && accountNetwork && CRYPTO_NETWORKS.some((n) => n.value === accountNetwork)) {
+      setNetwork(accountNetwork);
+    }
+  }, [accountNetwork, method]);
+  const accountBlocked = needsAccount && paymentAccount.hasTiers
+    && (paymentAccount.belowMin || (!paymentAccount.account && !paymentAccount.loading));
+
   const pickProof = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -80,6 +95,7 @@ export function DepositForm({ onSubmitted, showHistory = true, method = "transfe
 
   const canSubmit = () => {
     if (!currency || !amount || Number(amount) <= 0 || !method) return false;
+    if (accountBlocked) return false;
     if (method === "transfer") return !!proof && holder.trim().length >= 3;
     if (method === "crypto") return txHash.trim().length >= 10 && !!network;
     if (method === "cash" && cashMode === "courier") {
@@ -186,6 +202,18 @@ export function DepositForm({ onSubmitted, showHistory = true, method = "transfe
               )}
             </div>
           </div>
+
+          {needsAccount && (
+            <div data-testid="deposit-destination-account">
+              <Label className="micro-label text-neutral-500 mb-1 block">{t("deposits.destinationAccountLabel")}</Label>
+              <PaymentAccountBlock fromCurr={cur} amount={amount} paymentAccount={paymentAccount} />
+              {!paymentAccount.hasTiers && !cur?.payment_account && (
+                <p className="text-xs text-neutral-500 border border-dashed border-white/10 p-3" data-testid="deposit-no-account-hint">
+                  {t("deposits.noDestinationAccount")}
+                </p>
+              )}
+            </div>
+          )}
 
           {method === "transfer" && (
             <div className="space-y-3">

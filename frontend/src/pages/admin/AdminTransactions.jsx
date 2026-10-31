@@ -5,15 +5,19 @@ import { API } from "@/App";
 import { toast } from "sonner";
 import { Pagination } from "@/components/Pagination";
 import { Banknote } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { TransactionsTotals } from "./transactions/TransactionsTotals";
 import { TransactionsFilters } from "./transactions/TransactionsFilters";
 import { TransactionsTable } from "./transactions/TransactionsTable";
 import { TransactionDetailModal } from "./transactions/TransactionDetailModal";
+import { SectionsLegend } from "./transactions/SectionsLegend";
+import { ORIGIN_FILTERS, originOf } from "./transactions/originMeta";
 
 const PAGE_SIZE = 50;
 
 export default function AdminTransactions() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [totals, setTotals] = useState({ by_currency: {}, total_count: 0 });
@@ -23,6 +27,7 @@ export default function AdminTransactions() {
 
   // filters
   const [direction, setDirection] = useState("all");
+  const [origin, setOrigin] = useState("all");
   const [currency, setCurrency] = useState("");
   const [holder, setHolder] = useState("");
   const [holderInput, setHolderInput] = useState("");
@@ -58,13 +63,14 @@ export default function AdminTransactions() {
   // reset page on filter change
   useEffect(() => {
     setPage(0);
-  }, [direction, currency, holder, client, since, until, minAmount, maxAmount]);
+  }, [direction, origin, currency, holder, client, since, until, minAmount, maxAmount]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
       if (direction !== "all") params.direction = direction;
+      if (ORIGIN_FILTERS[origin]) params.ref_type = ORIGIN_FILTERS[origin];
       if (currency) params.currency = currency;
       if (holder) params.holder = holder;
       if (client) params.client = client;
@@ -78,17 +84,18 @@ export default function AdminTransactions() {
       const t = Number(r.headers["x-total-count"]);
       setTotal(Number.isFinite(t) ? t : r.data.items.length);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error al cargar transacciones");
+      toast.error(e.response?.data?.detail || t("admin.transactions.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [direction, currency, holder, client, since, until, minAmount, maxAmount, page]);
+  }, [direction, origin, currency, holder, client, since, until, minAmount, maxAmount, page, t]);
   useEffect(() => { load(); }, [load]);
 
   const downloadExport = async (kind) => {
     try {
       const params = new URLSearchParams();
       if (direction !== "all") params.set("direction", direction);
+      if (ORIGIN_FILTERS[origin]) params.set("ref_type", ORIGIN_FILTERS[origin]);
       if (currency) params.set("currency", currency);
       if (holder) params.set("holder", holder);
       if (client) params.set("client", client);
@@ -107,14 +114,15 @@ export default function AdminTransactions() {
       a.click();
       a.remove();
       URL.revokeObjectURL(blobUrl);
-      toast.success(`Exportado (${kind.toUpperCase()})`);
+      toast.success(t("admin.transactions.exported", { kind: kind.toUpperCase() }));
     } catch (e) {
-      toast.error(`Error al exportar ${kind.toUpperCase()}`);
+      toast.error(t("admin.transactions.exportError", { kind: kind.toUpperCase() }));
     }
   };
 
   const clearFilters = () => {
     setDirection("all");
+    setOrigin("all");
     setCurrency("");
     setHolderInput("");
     setClientInput("");
@@ -125,31 +133,33 @@ export default function AdminTransactions() {
   };
 
   const hasFilters =
-    direction !== "all" || currency || holderInput || clientInput || since || until ||
+    direction !== "all" || origin !== "all" || currency || holderInput || clientInput || since || until ||
     minAmount !== "" || maxAmount !== "";
 
   const goToSource = (tx) => {
-    const target = tx.ref_type === "withdrawal" ? "/admin/withdrawals" : "/admin/orders";
     setSelected(null);
-    navigate(target);
+    navigate(originOf(tx.ref_type).route);
   };
 
   return (
     <div data-testid="admin-transactions" className="space-y-5">
       <div className="mb-2">
         <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-2">
-          <Banknote className="w-3.5 h-3.5" /> / Contabilidad
+          <Banknote className="w-3.5 h-3.5" /> {t("admin.transactions.eyebrow")}
         </div>
-        <h1 className="font-display text-3xl">Registro de Transacciones</h1>
+        <h1 className="font-display text-3xl">{t("admin.transactions.title")}</h1>
         <p className="text-neutral-500 text-sm mt-1">
-          Entradas (transferencias recibidas) y salidas (retiros pagados) con titular para resguardo y auditoría.
+          {t("admin.transactions.subtitle")}
         </p>
       </div>
+
+      <SectionsLegend />
 
       <TransactionsTotals totalsByCurrency={totals?.by_currency || {}} />
 
       <TransactionsFilters
         direction={direction} setDirection={setDirection}
+        origin={origin} setOrigin={setOrigin}
         currency={currency} setCurrency={setCurrency}
         holderInput={holderInput} setHolderInput={setHolderInput}
         clientInput={clientInput} setClientInput={setClientInput}

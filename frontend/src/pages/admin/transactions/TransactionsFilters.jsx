@@ -2,9 +2,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, FileText } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { ORIGIN_FILTERS } from "./originMeta";
 
 export function TransactionsFilters({
   direction, setDirection,
+  origin, setOrigin,
   currency, setCurrency,
   holderInput, setHolderInput,
   clientInput, setClientInput,
@@ -17,11 +20,13 @@ export function TransactionsFilters({
   onClear,
   onExport,
 }) {
+  const { t } = useTranslation();
+  const tx = (k) => t(`admin.transactions.${k}`);
   return (
     <div className="flex flex-wrap gap-3 items-end justify-between">
       <div className="flex flex-wrap gap-3 items-end">
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Dirección</div>
+          <div className="micro-label text-neutral-500 mb-1">{tx("filterDirection")}</div>
           <Select value={direction} onValueChange={setDirection}>
             <SelectTrigger
               data-testid="tx-direction-filter"
@@ -30,14 +35,32 @@ export function TransactionsFilters({
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-              <SelectItem value="all">Todas</SelectItem>
-              <SelectItem value="in">Solo Entradas ↓</SelectItem>
-              <SelectItem value="out">Solo Salidas ↑</SelectItem>
+              <SelectItem value="all">{tx("filterAll")}</SelectItem>
+              <SelectItem value="in">{tx("filterInOnly")}</SelectItem>
+              <SelectItem value="out">{tx("filterOutOnly")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Moneda</div>
+          <div className="micro-label text-neutral-500 mb-1">{tx("colOrigin")}</div>
+          <Select value={origin} onValueChange={setOrigin}>
+            <SelectTrigger
+              data-testid="tx-origin-filter"
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-48"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+              {Object.keys(ORIGIN_FILTERS).map((k) => (
+                <SelectItem key={k} value={k} data-testid={`tx-origin-option-${k}`}>
+                  {t(`admin.transactions.originFilter.${k}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <div className="micro-label text-neutral-500 mb-1">{tx("colCurrency")}</div>
           <Select
             value={currency || "all"}
             onValueChange={(v) => setCurrency(v === "all" ? "" : v)}
@@ -49,7 +72,7 @@ export function TransactionsFilters({
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-              <SelectItem value="all">Todas</SelectItem>
+              <SelectItem value="all">{tx("filterAll")}</SelectItem>
               {currencies.map((c) => (
                 <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>
               ))}
@@ -57,27 +80,27 @@ export function TransactionsFilters({
           </Select>
         </div>
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Titular (contiene)</div>
+          <div className="micro-label text-neutral-500 mb-1">{tx("filterHolder")}</div>
           <Input
             data-testid="tx-holder-filter"
             value={holderInput}
             onChange={(e) => setHolderInput(e.target.value)}
-            placeholder="ej. juan pérez"
+            placeholder={tx("filterHolderPh")}
             className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-60 font-mono text-xs"
           />
         </div>
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Cliente (nombre o email)</div>
+          <div className="micro-label text-neutral-500 mb-1">{tx("filterClient")}</div>
           <Input
             data-testid="tx-client-filter"
             value={clientInput}
             onChange={(e) => setClientInput(e.target.value)}
-            placeholder="ej. maria@correo.com"
+            placeholder={tx("filterClientPh")}
             className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-60 font-mono text-xs"
           />
         </div>
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Desde</div>
+          <div className="micro-label text-neutral-500 mb-1">{tx("filterSince")}</div>
           <Input
             type="date"
             data-testid="tx-since-filter"
@@ -87,7 +110,7 @@ export function TransactionsFilters({
           />
         </div>
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Hasta</div>
+          <div className="micro-label text-neutral-500 mb-1">{tx("filterUntil")}</div>
           <Input
             type="date"
             data-testid="tx-until-filter"
@@ -97,7 +120,7 @@ export function TransactionsFilters({
           />
         </div>
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Monto mín.</div>
+          <div className="micro-label text-neutral-500 mb-1">{tx("filterMin")}</div>
           <Input
             type="number"
             min="0"
@@ -110,7 +133,7 @@ export function TransactionsFilters({
           />
         </div>
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Monto máx.</div>
+          <div className="micro-label text-neutral-500 mb-1">{tx("filterMax")}</div>
           <Input
             type="number"
             min="0"
@@ -128,7 +151,7 @@ export function TransactionsFilters({
             onClick={onClear}
             className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10"
           >
-            limpiar filtros
+            {tx("clearFilters")}
           </button>
         )}
       </div>

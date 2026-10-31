@@ -145,6 +145,9 @@ def _order_to_entrada(o: dict) -> TransactionItem:
         "to_code": o.get("to_code", ""),
         "amount_from": float(o.get("amount_from", 0.0)),
         "amount_to": float(o.get("amount_to", 0.0)),
+        # Cuenta de cobro de la empresa a la que el cliente envió el pago.
+        "payment_account_label": o.get("payment_account_label") or "",
+        "payment_account_details": "",
     }
 
 
@@ -601,12 +604,15 @@ async def _fetch_vip_batch_items(
 
 
 def _deposit_to_entrada(d: dict) -> TransactionItem:
-    """iter113 — confirmed client deposit → inbound company transaction."""
+    """iter113 — confirmed client deposit → inbound company transaction.
+    Un depósito acredita el saldo del cliente en la MISMA moneda: no genera
+    margen; la cuenta de cobro queda en `payment_account_*`."""
     mode = d.get("cash_mode")
     details = f"Depósito {d.get('method', '')}" + (f" ({mode})" if mode else "")
+    currency = d.get("currency", "")
     return {
         "direction": "in",
-        "currency": d.get("currency", ""),
+        "currency": currency,
         "amount": float(d.get("amount", 0.0)),
         "holder_name": d.get("account_holder") or d.get("contact_name") or d.get("user_name", ""),
         "client_name": d.get("user_name", ""),
@@ -619,6 +625,12 @@ def _deposit_to_entrada(d: dict) -> TransactionItem:
         "proof_image": d.get("proof_url", "") or "",
         "delivery_details": details,
         "admin_note": d.get("admin_note") or "",
+        "crypto_network": d.get("network") or "",
+        "tx_hash": d.get("tx_hash") or "",
+        "payment_account_label": d.get("payment_account_label") or "",
+        "payment_account_details": d.get("payment_account_details") or "",
+        "credited_to": f"{currency} balance" if currency else "",
+        "generates_margin": False,
     }
 
 
@@ -643,13 +655,16 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
                              min_amount: Optional[float] = None,
                              max_amount: Optional[float] = None,
                              user_id: Optional[str] = None,
-                             client: Optional[str] = None) -> List[TransactionItem]:
+                             client: Optional[str] = None,
+                             ref_type: Optional[str] = None) -> List[TransactionItem]:
     """Unified transaction list from approved/completed orders + approved/paid withdrawals.
 
     Each entry: {direction: 'in'|'out', currency, amount, holder_name, client_name,
-                 method, status, ref_id, created_at}
+                 method, status, ref_id, ref_type, created_at}
     Only records with a non-empty holder/sender field are included.
     If user_id is provided, restricts to transactions owned by that user.
+    `ref_type` (origen) acepta una lista separada por comas, p. ej.
+    "order,order_payout" para ver solo lo que nace en Órdenes.
     """
     items: List[TransactionItem] = []
     date_q = date_range_query(since, until)
@@ -706,6 +721,10 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
                 if cq in (it.get("client_name") or "").lower()
                 or cq in (it.get("client_email") or "").lower()
             ]
+    if ref_type:
+        wanted = {r.strip() for r in ref_type.split(",") if r.strip()}
+        if wanted:
+            items = [it for it in items if it.get("ref_type") in wanted]
     return items
 
 

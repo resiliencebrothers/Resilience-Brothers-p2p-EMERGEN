@@ -1,6 +1,8 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export function TransactionsTotals({ totalsByCurrency }) {
+  const { t } = useTranslation();
   const rows = Object.entries(totalsByCurrency)
     .map(([code, v]) => ({ code, ...v, net: (v.in || 0) - (v.out || 0) }))
     .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
@@ -18,18 +20,18 @@ export function TransactionsTotals({ totalsByCurrency }) {
           <div className="space-y-1 text-sm">
             <div className="flex justify-between">
               <span className="text-neutral-400 flex items-center gap-1">
-                <ArrowDown className="w-3 h-3 text-[#22C55E]" /> Entradas
+                <ArrowDown className="w-3 h-3 text-[#22C55E]" /> {t("admin.transactions.inflows")}
               </span>
               <span className="font-mono text-[#22C55E]">+{row.in.toLocaleString()}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-neutral-400 flex items-center gap-1">
-                <ArrowUp className="w-3 h-3 text-[#EF4444]" /> Salidas
+                <ArrowUp className="w-3 h-3 text-[#EF4444]" /> {t("admin.transactions.outflows")}
               </span>
               <span className="font-mono text-[#EF4444]">-{row.out.toLocaleString()}</span>
             </div>
             <div className="flex justify-between border-t border-white/5 pt-1 mt-1">
-              <span className="text-neutral-300 text-xs">Neto</span>
+              <span className="text-neutral-300 text-xs">{t("admin.transactions.net")}</span>
               <span
                 className={`font-mono font-bold ${row.net >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}
               >

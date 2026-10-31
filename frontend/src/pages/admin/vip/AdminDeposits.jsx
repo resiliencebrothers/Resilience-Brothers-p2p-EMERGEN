@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Check, X as XIcon, Clock, ExternalLink, Truck, Building2, Search } from "lucide-react";
+import { Check, X as XIcon, Clock, ExternalLink, Truck, Building2, Search, Landmark } from "lucide-react";
 import { useLiveRefresh } from "@/hooks/useLiveStream";
+import { AssignDepositAccountDialog } from "./AssignDepositAccountDialog";
 
 /**
  * iter113 — Admin queue for client deposits (`deposits` collection).
@@ -29,6 +30,7 @@ export default function AdminDeposits({ onChanged }) {
   const [userQuery, setUserQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [rejecting, setRejecting] = useState(null);
+  const [assigning, setAssigning] = useState(null);
   const abortRef = useRef(null);
   const initialLoadRef = useRef(true);
 
@@ -198,6 +200,24 @@ export default function AdminDeposits({ onChanged }) {
                       {t("adminVipLedgerOps.holderLabel")}: <span className="text-neutral-300">{d.account_holder}</span>
                     </div>
                   )}
+                  {d.method !== "cash" && (
+                    <div className="text-[0.65rem] mt-0.5 flex items-center gap-1 flex-wrap" data-testid={`deposit-account-${d.id}`}>
+                      <Landmark className="w-3 h-3 text-neutral-500" />
+                      {d.payment_account_label ? (
+                        <span className="text-emerald-400">{d.payment_account_label}</span>
+                      ) : (
+                        <span className="text-amber-400">{t("adminDeposits.accountMissing")}</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setAssigning(d)}
+                        data-testid={`deposit-assign-account-${d.id}`}
+                        className="text-[#A78BFA] hover:underline underline-offset-2"
+                      >
+                        {d.payment_account_label ? t("adminDeposits.changeAccount") : t("adminDeposits.assignAccount")}
+                      </button>
+                    </div>
+                  )}
                   {d.tx_hash && (
                     <div className="text-[0.65rem] text-emerald-400 font-mono mt-0.5 max-w-[200px] truncate" title={d.tx_hash}>
                       {d.tx_hash}
@@ -266,6 +286,11 @@ export default function AdminDeposits({ onChanged }) {
         deposit={rejecting}
         onClose={() => setRejecting(null)}
         onDone={() => { setRejecting(null); load(); }}
+      />
+      <AssignDepositAccountDialog
+        deposit={assigning}
+        onClose={() => setAssigning(null)}
+        onDone={() => { setAssigning(null); load(); }}
       />
     </div>
   );

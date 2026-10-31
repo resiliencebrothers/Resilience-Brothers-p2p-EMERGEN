@@ -89,6 +89,14 @@ export function DepositDetailDialog({ d, onClose }) {
           {d.account_holder && (
             <InfoRow label={t("deposits.detail.holderLabel")}>{d.account_holder}</InfoRow>
           )}
+          {d.payment_account_label && (
+            <InfoRow label={t("deposits.detail.destinationAccountLabel")} testid={`deposit-detail-account-${d.id}`}>
+              <span className="text-emerald-400">{d.payment_account_label}</span>
+              {d.payment_account_details && (
+                <div className="text-[0.65rem] text-neutral-400 font-mono whitespace-pre-wrap mt-0.5">{d.payment_account_details}</div>
+              )}
+            </InfoRow>
+          )}
           <InfoRow label={t("deposits.detail.timeLabel")}>
             <span className="text-xs">{fmtDateTime(d.created_at)}</span>
           </InfoRow>

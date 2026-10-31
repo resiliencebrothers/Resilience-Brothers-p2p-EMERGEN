@@ -368,6 +368,116 @@ def _require_client(user: dict) -> None:
         raise HTTPException(status_code=403, detail="Empleados no pueden depositar saldo de cliente.")
 
 
+class DepositPaymentAccountPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    payment_account_id: str = Field(..., min_length=1, max_length=64)
+
+
+def _account_snapshot(acc: dict) -> dict:
+    return {
+        "id": acc.get("id", ""),
+        "label": acc.get("label", ""),
+        "account_details": acc.get("account_details", ""),
+    }
+
+
+async def _resolve_deposit_payment_account(currency: dict, method: str,
+                                           amount: float,
+                                           network: Optional[str] = None) -> Optional[dict]:
+    """Cuenta de cobro para transfer/cripto: escalonada por monto (misma
+    regla que Cambiar) o, si la moneda no tiene escalones, la cuenta legada
+    de texto libre. Con escalones y sin cuenta para ese monto → 400. En
+    cripto se prefiere la cuenta de la misma red elegida por el cliente."""
+    if method not in ("transfer", "crypto"):
+        return None
+    from services.payment_accounts import (assert_amount_meets_minimum,
+                                           get_active_accounts, pick_account)
+    code = (currency.get("code") or "").upper()
+    acc = await assert_amount_meets_minimum(code, amount)
+    if acc:
+        if method == "crypto" and network:
+            same_net = [a for a in await get_active_accounts(code)
+                        if (a.get("network") or "").upper() == network]
+            acc = pick_account(same_net, amount) or acc
+        return _account_snapshot(acc)
+    legacy = (currency.get("payment_account") or "").strip()
+    if legacy:
+        return {"id": f"legacy_{code}", "label": f"Cuenta {code}",
+                "account_details": legacy}
+    return None
+
+
+@router.get("/admin/deposits/payment-account-options")
+async def admin_deposit_payment_account_options(request: Request,
+                                                currency: str) -> Any:
+    """Cuentas de cobro activas de una moneda para asignar a un depósito
+    (gate `withdrawals`, no `payment_accounts`: el personal de depósitos no
+    edita cuentas, solo indica en cuál entró el dinero)."""
+    staff = await require_permission(request, "withdrawals")
+    code = (currency or "").strip().upper()
+    _enforce_employee_currency_scope(staff, code)
+    from services.payment_accounts import get_active_accounts
+    rows = await get_active_accounts(code)
+    rows.sort(key=lambda a: float(a.get("min_amount") or 0.0))
+    items = [{**_account_snapshot(a), "network": a.get("network") or "",
+              "min_amount": a.get("min_amount"), "max_amount": a.get("max_amount")}
+             for a in rows]
+    cur = await db.currencies.find_one({"code": code}, {"_id": 0, "payment_account": 1})
+    legacy = ((cur or {}).get("payment_account") or "").strip()
+    if legacy:
+        items.append({"id": f"legacy_{code}", "label": f"Cuenta {code}",
+                      "account_details": legacy, "network": "",
+                      "min_amount": None, "max_amount": None})
+    return {"items": items}
+
+
+@router.put("/admin/deposits/{dep_id}/payment-account")
+async def admin_set_deposit_payment_account(
+        dep_id: str, payload: DepositPaymentAccountPayload, request: Request) -> Any:
+    """Asigna/corrige la cuenta de cobro de un depósito (incluidos los
+    antiguos sin cuenta registrada) para que Transacciones muestre a qué
+    cuenta de la empresa llegó el dinero."""
+    staff = await require_permission(request, "withdrawals")
+    doc = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Depósito no encontrado.")
+    code = (doc.get("currency") or "").upper()
+    _enforce_employee_currency_scope(staff, code)
+    if doc.get("method") not in ("transfer", "crypto"):
+        raise HTTPException(status_code=422,
+                            detail="Los depósitos en efectivo no usan cuenta de cobro.")
+    acc_id = payload.payment_account_id.strip()
+    if acc_id == f"legacy_{code}":
+        cur = await db.currencies.find_one({"code": code}, {"_id": 0, "payment_account": 1})
+        legacy = ((cur or {}).get("payment_account") or "").strip()
+        if not legacy:
+            raise HTTPException(status_code=404, detail="Cuenta de cobro no encontrada.")
+        snap = {"id": acc_id, "label": f"Cuenta {code}", "account_details": legacy}
+    else:
+        acc = await db.payment_accounts.find_one(
+            {"id": acc_id, "currency_code": code}, {"_id": 0})
+        if not acc:
+            raise HTTPException(status_code=404,
+                                detail="Cuenta de cobro no encontrada para esa moneda.")
+        snap = _account_snapshot(acc)
+    now = iso(now_utc())
+    await db.deposits.update_one({"id": dep_id}, {"$set": {
+        "payment_account_id": snap["id"],
+        "payment_account_label": snap["label"],
+        "payment_account_details": snap["account_details"],
+        "updated_at": now,
+    }})
+    await log_action(
+        db=db, actor=staff, action="deposit.payment_account_set",
+        entity_type="deposit", entity_id=dep_id,
+        details={"previous": doc.get("payment_account_label"),
+                 "payment_account_id": snap["id"],
+                 "payment_account_label": snap["label"]},
+    )
+    fresh = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
+    return fresh
+
+
 async def _get_office_address() -> str:
     doc = await db.settings.find_one({"id": "global"}, {"_id": 0, "office_address": 1})
     return (doc or {}).get("office_address") or ""
@@ -461,6 +571,9 @@ async def deposits_config(request: Request) -> Any:
             "type": c.get("type") or "",
             "methods": methods,
             "usdt_per_unit": round(float(per_unit), 6) if per_unit else None,
+            # Cuenta de cobro legada (texto libre) cuando la moneda no tiene
+            # cuentas escalonadas — el formulario la muestra como destino.
+            "payment_account": (c.get("payment_account") or "").strip(),
         })
     items.sort(key=lambda x: (x["code"] != "USDT", x["code"]))
     return {
@@ -561,6 +674,11 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
         raise HTTPException(
             status_code=422,
             detail=f"{code} admite máximo {precision} decimales; ajusta el importe.")
+    # Cuenta de cobro de la empresa a la que el cliente envía el dinero
+    # (transferencia / cripto). Se resuelve por moneda + monto igual que en
+    # Cambiar y queda fotografiada en el depósito para Transacciones.
+    pay_acc = await _resolve_deposit_payment_account(currency, method, normalized,
+                                                     network)
     # DR02 — advertencia visible para el personal si la misma evidencia ya
     # aparece declarada en otro depósito (cualquier estado).
     evidence_dup = None
@@ -593,6 +711,9 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
         "pickup_phone": (payload.pickup_phone or "").strip() or None,
         "contact_name": (payload.contact_name or "").strip() or None,
         "note": (payload.note or "").strip() or None,
+        "payment_account_id": pay_acc.get("id") if pay_acc else None,
+        "payment_account_label": pay_acc.get("label") if pay_acc else None,
+        "payment_account_details": pay_acc.get("account_details") if pay_acc else None,
         "status": "pending",
         "admin_note": None,
         "reviewed_at": None,

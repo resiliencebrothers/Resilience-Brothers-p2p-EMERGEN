@@ -128,6 +128,7 @@ export default function AdminOrders() {
       <AdminPageHeader
         eyebrow={t("admin.orders.eyebrow")}
         title={t("admin.orders.title")}
+        subtitle={t("admin.orders.subtitle")}
         testid="admin-orders-header"
       />
 

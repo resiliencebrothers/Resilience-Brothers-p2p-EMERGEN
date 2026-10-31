@@ -1257,7 +1257,8 @@
       "networkClientNotDeclared": "El cliente NO declaró la red. Contacta antes de enviar.",
       "networkSendOn": "Enviar en la red {{net}}. Verifica que el wallet destino la acepte.",
       "fPayAccount": "Cuenta de cobro:",
-      "allAccounts": "Todas las cuentas"
+      "allAccounts": "Todas las cuentas",
+      "subtitle": "Solo órdenes de CAMBIO: el cliente envía una moneda y recibe otra (aquí se aprueban, rechazan y se adjunta el comprobante de pago). Los depósitos y retiros de saldo viven en «Depósitos y Retiros»; el libro contable completo, en «Transacciones»."
     },
     "kycAdmin": {
       "title": "Verificación de identidad (KYC)",
@@ -2442,6 +2443,126 @@
       "confirming": "Confirmando…",
       "depositConfirmed": "Depósito confirmado — saldo acreditado al cliente",
       "depositConfirmError": "No se pudo confirmar el depósito"
+    },
+    "transactions": {
+      "colOrigin": "Origen",
+      "colAccount": "Cuenta de cobro",
+      "accountLabel": "Cuenta de cobro de la empresa (a dónde envió el cliente)",
+      "accountMissing": "Cuenta no registrada.",
+      "accountMissingShort": "No registrada",
+      "accountMissingDepositHint": "Asígnala desde Depósitos y Retiros → Depósitos → «Asignar cuenta».",
+      "accountCashNA": "Efectivo: no aplica cuenta de cobro.",
+      "creditedTo": "Acreditado a",
+      "creditedToValue": "Saldo en {{currency}} de {{client}} (misma moneda, sin conversión)",
+      "noMarginHint": "Un depósito de saldo no genera ganancia a la empresa: el margen aparece cuando el cliente convierte o cambia ese saldo.",
+      "depositHash": "Hash on-chain del depósito",
+      "origin": {
+        "order": "Orden de cambio",
+        "order_payout": "Pago de orden",
+        "deposit": "Depósito de saldo",
+        "withdrawal": "Retiro de saldo",
+        "company_adjustment": "Fondo empresa",
+        "company_withdrawal": "Retiro del fondo",
+        "vip_batch_item": "Lote VIP",
+        "conversion": "Conversión"
+      },
+      "originExplainer": {
+        "default": "Movimiento registrado en el libro contable.",
+        "order": "Nació en Cambiar (Intercambios): el cliente envió esta moneda para recibir otra. Se opera en Órdenes.",
+        "order_payout": "Pago de la empresa al cliente por una orden de cambio completada. Se opera en Órdenes.",
+        "deposit": "Nació en Depósitos y Retiros: el cliente recargó su saldo en la plataforma. No pasa por Órdenes.",
+        "withdrawal": "Nació en Depósitos y Retiros: el cliente retiró saldo de la plataforma.",
+        "company_adjustment": "Movimiento manual de capital registrado en Fondos de la empresa.",
+        "company_withdrawal": "Retiro del fondo de la empresa (proveedor, socio, gasto).",
+        "vip_batch_item": "Entrada aprobada dentro de un lote VIP."
+      },
+      "originFilter": {
+        "all": "Todos los orígenes",
+        "orders": "Órdenes de cambio",
+        "deposits": "Depósitos de saldo",
+        "withdrawals": "Retiros de saldo",
+        "company": "Fondos empresa",
+        "vip": "Lotes VIP"
+      },
+      "idLabel": {
+        "order": "ID Orden",
+        "deposit": "ID Depósito",
+        "withdrawal": "ID Retiro",
+        "movement": "ID Movimiento",
+        "batch": "ID Lote",
+        "ref": "Referencia"
+      },
+      "goTo": {
+        "orders": "Ir a Órdenes",
+        "deposits": "Ir a Depósitos y Retiros",
+        "withdrawals": "Ir a Depósitos y Retiros",
+        "company": "Ir a Fondos empresa",
+        "vip": "Ir a Lotes VIP"
+      },
+      "legend": {
+        "transactions": {
+          "title": "Transacciones (esta pantalla)",
+          "body": "Libro contable de solo lectura: TODO el dinero que entra y sale (órdenes, depósitos, retiros, fondos empresa, lotes VIP). Cada fila indica su Origen y la cuenta de cobro."
+        },
+        "orders": {
+          "title": "Órdenes",
+          "body": "Solo cambios de moneda hechos en «Cambiar»: aprobar, rechazar y pagar. Generan margen para la empresa."
+        },
+        "deposits": {
+          "title": "Depósitos y Retiros",
+          "body": "Recargas y retiros del saldo del cliente en la misma moneda. Un depósito NO es una orden ni genera ganancia."
+        }
+      },
+      "eyebrow": "/ Contabilidad",
+      "title": "Registro de Transacciones",
+      "subtitle": "Libro contable de todo el dinero que entra y sale, con titular, cuenta de cobro y origen para resguardo y auditoría.",
+      "detailTitle": "Detalle de Transacción",
+      "loadError": "Error al cargar transacciones",
+      "exported": "Exportado ({{kind}})",
+      "exportError": "Error al exportar {{kind}}",
+      "inflows": "Entradas",
+      "outflows": "Salidas",
+      "net": "Neto",
+      "in": "Entrada",
+      "out": "Salida",
+      "filterDirection": "Dirección",
+      "filterAll": "Todas",
+      "filterInOnly": "Solo Entradas ↓",
+      "filterOutOnly": "Solo Salidas ↑",
+      "filterHolder": "Titular (contiene)",
+      "filterHolderPh": "ej. juan pérez",
+      "filterClient": "Cliente (nombre o email)",
+      "filterClientPh": "ej. maria@correo.com",
+      "filterSince": "Desde",
+      "filterUntil": "Hasta",
+      "filterMin": "Monto mín.",
+      "filterMax": "Monto máx.",
+      "clearFilters": "limpiar filtros",
+      "colDate": "Fecha",
+      "colType": "Tipo",
+      "colCurrency": "Moneda",
+      "colAmount": "Monto",
+      "colHolder": "Titular de cuenta",
+      "colClient": "Cliente",
+      "colMethod": "Método",
+      "colStatus": "Estado",
+      "colRef": "Ref",
+      "loading": "Cargando...",
+      "empty": "Sin transacciones que mostrar",
+      "sendData": "Datos del envío",
+      "beneficiaryData": "Datos del beneficiario",
+      "copy": "Copiar",
+      "walletCopied": "Wallet copiada",
+      "dataCopied": "Datos copiados",
+      "adminNote": "Nota admin",
+      "payoutHash": "Hash on-chain del pago",
+      "copyHash": "Copiar hash",
+      "hashCopied": "Hash copiado",
+      "proofPayout": "Comprobante del pago al cliente",
+      "proofTransfer": "Comprobante de transferencia",
+      "download": "Descargar",
+      "noProof": "Sin comprobante adjunto",
+      "outNoProof": "Las salidas no tienen comprobante de transferencia entrante (son pagos de la plataforma al cliente)."
     }
   },
   "adminOverview": {
@@ -4079,8 +4200,11 @@
       "reviewedLabel": "Revisado",
       "noteLabel": "Nota",
       "staffNote": "Respuesta del staff",
-      "proofLink": "Ver comprobante"
-    }
+      "proofLink": "Ver comprobante",
+      "destinationAccountLabel": "Cuenta destino (empresa)"
+    },
+    "destinationAccountLabel": "Cuenta de la empresa a la que debes enviar",
+    "noDestinationAccount": "Aún no hay una cuenta de cobro configurada para esta moneda. Consulta al equipo antes de enviar."
   },
   "adminDeposits": {
     "evidenceReused": "Evidencia ya usada en el depósito {{id}}",
@@ -4110,7 +4234,15 @@
       "notDelivered": "🚚 {{courier}} aún no confirmó la recogida del efectivo.",
       "ready": "✓ Mensajero confirmó la recogida — listo para confirmar el depósito.",
       "courierFallback": "El mensajero"
-    }
+    },
+    "accountMissing": "Cuenta de cobro no registrada",
+    "assignAccount": "Asignar cuenta",
+    "changeAccount": "Cambiar",
+    "assignDialogTitle": "Cuenta de cobro del depósito",
+    "assignDialogHint": "Indica a qué cuenta de la empresa llegó el depósito de {{amount}} {{currency}} de {{client}}. Se reflejará en Transacciones.",
+    "assignNoAccounts": "No hay cuentas de cobro configuradas para {{currency}}. Créalas en Cuentas de cobro.",
+    "assignSave": "Guardar cuenta",
+    "assignedToast": "Cuenta de cobro asignada"
   },
   "historyHub": {
     "breadcrumb": "/ HISTORIAL",
@@ -4318,7 +4450,7 @@
       "deposits": "Depósitos de clientes",
       "requests": "Solicitudes de capital"
     },
-    "depositsSubtitle": "Confirma o rechaza los depósitos de clientes (efectivo, transferencia o cripto). Al confirmar se acredita el saldo en la misma moneda."
+    "depositsSubtitle": "Confirma o rechaza los depósitos de clientes (efectivo, transferencia o cripto). Al confirmar se acredita el saldo en la misma moneda. Cada depósito confirmado aparece en Transacciones como Entrada «Depósito de saldo» con su cuenta de cobro."
   },
   "reconciliation": {
     "eyebrow": "TESORERÍA",

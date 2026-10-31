@@ -1257,7 +1257,8 @@
       "networkClientNotDeclared": "The client did NOT declare the network. Contact them before sending.",
       "networkSendOn": "Send on the {{net}} network. Verify the destination wallet accepts it.",
       "fPayAccount": "Collection account:",
-      "allAccounts": "All accounts"
+      "allAccounts": "All accounts",
+      "subtitle": "EXCHANGE orders only: the client sends one currency and receives another (approve, reject and attach the payout proof here). Balance deposits and withdrawals live in “Deposits & Withdrawals”; the full accounting ledger is “Transactions”."
     },
     "kycAdmin": {
       "title": "Identity verification (KYC)",
@@ -2442,6 +2443,126 @@
       "confirming": "Confirming…",
       "depositConfirmed": "Deposit confirmed — balance credited to the client",
       "depositConfirmError": "Could not confirm the deposit"
+    },
+    "transactions": {
+      "colOrigin": "Origin",
+      "colAccount": "Collection account",
+      "accountLabel": "Company collection account (where the client sent the money)",
+      "accountMissing": "Account not recorded.",
+      "accountMissingShort": "Not recorded",
+      "accountMissingDepositHint": "Assign it from Deposits & Withdrawals → Deposits → “Assign account”.",
+      "accountCashNA": "Cash: no collection account applies.",
+      "creditedTo": "Credited to",
+      "creditedToValue": "{{client}}'s {{currency}} balance (same currency, no conversion)",
+      "noMarginHint": "A balance deposit does not generate profit for the company: the margin appears when the client converts or exchanges that balance.",
+      "depositHash": "Deposit on-chain hash",
+      "origin": {
+        "order": "Exchange order",
+        "order_payout": "Order payout",
+        "deposit": "Balance deposit",
+        "withdrawal": "Balance withdrawal",
+        "company_adjustment": "Company fund",
+        "company_withdrawal": "Fund withdrawal",
+        "vip_batch_item": "VIP batch",
+        "conversion": "Conversion"
+      },
+      "originExplainer": {
+        "default": "Movement recorded in the accounting ledger.",
+        "order": "Born in Exchange: the client sent this currency to receive another. Managed in Orders.",
+        "order_payout": "Company payout to the client for a completed exchange order. Managed in Orders.",
+        "deposit": "Born in Deposits & Withdrawals: the client topped up their platform balance. It never goes through Orders.",
+        "withdrawal": "Born in Deposits & Withdrawals: the client withdrew balance from the platform.",
+        "company_adjustment": "Manual capital movement recorded in Company Funds.",
+        "company_withdrawal": "Withdrawal from the company fund (supplier, partner, expense).",
+        "vip_batch_item": "Approved inflow inside a VIP batch."
+      },
+      "originFilter": {
+        "all": "All origins",
+        "orders": "Exchange orders",
+        "deposits": "Balance deposits",
+        "withdrawals": "Balance withdrawals",
+        "company": "Company funds",
+        "vip": "VIP batches"
+      },
+      "idLabel": {
+        "order": "Order ID",
+        "deposit": "Deposit ID",
+        "withdrawal": "Withdrawal ID",
+        "movement": "Movement ID",
+        "batch": "Batch ID",
+        "ref": "Reference"
+      },
+      "goTo": {
+        "orders": "Go to Orders",
+        "deposits": "Go to Deposits & Withdrawals",
+        "withdrawals": "Go to Deposits & Withdrawals",
+        "company": "Go to Company Funds",
+        "vip": "Go to VIP Batches"
+      },
+      "legend": {
+        "transactions": {
+          "title": "Transactions (this screen)",
+          "body": "Read-only ledger: ALL money in and out (orders, deposits, withdrawals, company funds, VIP batches). Every row shows its Origin and the collection account."
+        },
+        "orders": {
+          "title": "Orders",
+          "body": "Only currency exchanges made in “Exchange”: approve, reject and pay. They generate margin for the company."
+        },
+        "deposits": {
+          "title": "Deposits & Withdrawals",
+          "body": "Top-ups and withdrawals of the client's balance in the same currency. A deposit is NOT an order and generates no profit."
+        }
+      },
+      "eyebrow": "/ Accounting",
+      "title": "Transactions Register",
+      "subtitle": "Ledger of all money in and out, with account holder, collection account and origin for safekeeping and audit.",
+      "detailTitle": "Transaction Detail",
+      "loadError": "Could not load transactions",
+      "exported": "Exported ({{kind}})",
+      "exportError": "Could not export {{kind}}",
+      "inflows": "Inflows",
+      "outflows": "Outflows",
+      "net": "Net",
+      "in": "Inflow",
+      "out": "Outflow",
+      "filterDirection": "Direction",
+      "filterAll": "All",
+      "filterInOnly": "Inflows only ↓",
+      "filterOutOnly": "Outflows only ↑",
+      "filterHolder": "Holder (contains)",
+      "filterHolderPh": "e.g. john smith",
+      "filterClient": "Client (name or email)",
+      "filterClientPh": "e.g. mary@mail.com",
+      "filterSince": "From",
+      "filterUntil": "To",
+      "filterMin": "Min amount",
+      "filterMax": "Max amount",
+      "clearFilters": "clear filters",
+      "colDate": "Date",
+      "colType": "Type",
+      "colCurrency": "Currency",
+      "colAmount": "Amount",
+      "colHolder": "Account holder",
+      "colClient": "Client",
+      "colMethod": "Method",
+      "colStatus": "Status",
+      "colRef": "Ref",
+      "loading": "Loading...",
+      "empty": "No transactions to show",
+      "sendData": "Sender details",
+      "beneficiaryData": "Beneficiary details",
+      "copy": "Copy",
+      "walletCopied": "Wallet copied",
+      "dataCopied": "Details copied",
+      "adminNote": "Admin note",
+      "payoutHash": "Payout on-chain hash",
+      "copyHash": "Copy hash",
+      "hashCopied": "Hash copied",
+      "proofPayout": "Proof of payment to the client",
+      "proofTransfer": "Transfer proof",
+      "download": "Download",
+      "noProof": "No proof attached",
+      "outNoProof": "Outflows have no incoming transfer proof (they are platform payments to the client)."
     }
   },
   "adminOverview": {
@@ -4079,8 +4200,11 @@
       "reviewedLabel": "Reviewed",
       "noteLabel": "Note",
       "staffNote": "Staff response",
-      "proofLink": "View proof"
-    }
+      "proofLink": "View proof",
+      "destinationAccountLabel": "Destination account (company)"
+    },
+    "destinationAccountLabel": "Company account you must send to",
+    "noDestinationAccount": "No collection account is configured for this currency yet. Check with the team before sending."
   },
   "adminDeposits": {
     "colClient": "Client",
@@ -4110,7 +4234,15 @@
       "ready": "✓ Courier confirmed the pickup — ready to confirm the deposit.",
       "courierFallback": "The courier"
     },
-    "evidenceReused": "Evidence already used by deposit {{id}}"
+    "evidenceReused": "Evidence already used by deposit {{id}}",
+    "accountMissing": "Collection account not recorded",
+    "assignAccount": "Assign account",
+    "changeAccount": "Change",
+    "assignDialogTitle": "Deposit collection account",
+    "assignDialogHint": "Select which company account received the {{amount}} {{currency}} deposit from {{client}}. It will show in Transactions.",
+    "assignNoAccounts": "No collection accounts configured for {{currency}}. Create them under Collection accounts.",
+    "assignSave": "Save account",
+    "assignedToast": "Collection account assigned"
   },
   "historyHub": {
     "breadcrumb": "/ HISTORY",
@@ -4318,7 +4450,7 @@
       "deposits": "Client deposits",
       "requests": "Capital requests"
     },
-    "depositsSubtitle": "Confirm or reject client deposits (cash, transfer or crypto). Confirming credits the balance in the same currency."
+    "depositsSubtitle": "Confirm or reject client deposits (cash, transfer or crypto). Confirming credits the balance in the same currency. Every confirmed deposit appears in Transactions as an Inflow “Balance deposit” with its collection account."
   },
   "reconciliation": {
     "eyebrow": "TREASURY",
