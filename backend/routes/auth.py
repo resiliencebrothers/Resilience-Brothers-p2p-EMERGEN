@@ -743,7 +743,13 @@ async def auth_forgot_password(payload: ForgotPasswordPayload, request: Request,
     """Send reset link if account exists. Always returns 200 to avoid email enumeration."""
     email = payload.email.lower().strip()
     user = await db.users.find_one({"email": email}, {"_id": 0})
-    if user and user.get("password_hash"):
+    # iter(google-setpw) — antes solo se enviaba enlace si YA había password_hash,
+    # dejando sin salida a las cuentas creadas con Google (sin contraseña). Ahora
+    # cualquier cuenta existente recibe el enlace: permite ESTABLECER contraseña
+    # por primera vez a usuarios de Google (su email ya está verificado por Google)
+    # para poder entrar también con email+contraseña. El endpoint reset-password
+    # sigue exigiendo el token de un solo uso enviado por correo.
+    if user:
         token = uuid.uuid4().hex + uuid.uuid4().hex
         # iter257(D01) — el token se guarda HASHEADO (sha256): aunque un doc
         # de usuario se filtre, el valor útil solo viaja por el correo.

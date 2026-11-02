@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 
-export function AuthNotice({ notice, onSwitchToRegister, onUseGoogle }) {
+export function AuthNotice({ notice, onSwitchToRegister, onUseGoogle, onSetPassword }) {
   const { t } = useTranslation();
   if (!notice) return null;
   return (
@@ -24,14 +24,24 @@ export function AuthNotice({ notice, onSwitchToRegister, onUseGoogle }) {
         </button>
       )}
       {notice.kind === "google" && (
-        <button
-          type="button"
-          data-testid="auth-notice-google-btn"
-          onClick={onUseGoogle}
-          className="text-[#60A5FA] hover:text-[#93C5FD] font-semibold underline underline-offset-4"
-        >
-          {t("auth.notice.googleCta")}
-        </button>
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            data-testid="auth-notice-google-btn"
+            onClick={onUseGoogle}
+            className="text-[#60A5FA] hover:text-[#93C5FD] font-semibold underline underline-offset-4 self-start"
+          >
+            {t("auth.notice.googleCta")}
+          </button>
+          <button
+            type="button"
+            data-testid="auth-notice-google-setpw-btn"
+            onClick={onSetPassword}
+            className="text-[#A78BFA] hover:text-[#C4B5FD] font-semibold underline underline-offset-4 self-start"
+          >
+            {t("auth.notice.googleSetPasswordCta")}
+          </button>
+        </div>
       )}
     </div>
   );

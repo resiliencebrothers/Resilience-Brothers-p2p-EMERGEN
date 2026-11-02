@@ -1,3 +1,13 @@
+## Changelog — 2 Nov 2026 (Cuentas creadas con Google ahora pueden establecer contraseña)
+
+Bug reportado: un cliente que creó su cuenta con Google, al intentar login manual con contraseña incorrecta, solo veía "Continuar con Google" y NO tenía forma de usar "¿Olvidaste la contraseña?". (Consultado `integration_expert` por tratarse de auth.)
+
+- **Causa raíz**: `POST /auth/forgot-password` solo emitía enlace de recuperación si la cuenta YA tenía `password_hash`; las cuentas de Google (sin contraseña) quedaban sin salida.
+- **Backend** (`routes/auth.py`): `forgot-password` ahora emite el enlace para CUALQUIER cuenta existente (incluidas las de Google). El email ya está verificado por Google, y `reset-password` sigue exigiendo el token de un solo uso enviado por correo. Se preservan: respuesta 200 anti-enumeración, token hasheado (sha256) de un solo uso, expiración 2h, rate limits y revocación de sesiones (`session_version++`). `auth_provider` se deja intacto ("google"): tras establecer contraseña el usuario entra con Google O con email+contraseña; el login funciona porque ya existe `password_hash` y la verja EMAIL_NOT_VERIFIED solo aplica a `auth_provider=="password"`.
+- **Frontend**: en el aviso azul "Esta cuenta se creó con Google" (`auth/AuthNotice.jsx`) se añadió un segundo botón `auth-notice-google-setpw-btn` → "Establecer contraseña (entrar con email)" que lleva al modo recuperar; reescrito el texto del aviso para explicar ambas vías. i18n `auth.notice.googleAccount` (reescrito) + `auth.notice.googleSetPasswordCta` (ES/EN). `EmailAuthDialog.jsx` cablea `onSetPassword`.
+- **Verificado** (curl, con bypass de captcha de la suite interna): usuario google-only → forgot-password emite token (antes NO) → reset-password "Contraseña actualizada" → login con la nueva contraseña 200 → login con contraseña errónea 401 INVALID_CREDENTIALS (ya no USE_GOOGLE_LOGIN). Diálogo de login renderiza sin errores a 390px con el enlace "¿Olvidaste tu contraseña?" visible. NOTA: el botón nuevo del aviso solo aparece tras un intento de login que el backend responde USE_GOOGLE_LOGIN, lo que exige pasar el Turnstile real; no es ejercitable en automatización headless (igual que la nota previa de Turnstile), verificado por código + flujo backend completo.
+
+
 ## Changelog — 2 Nov 2026 (Red cripto como desplegable obligatorio + botón "Ver origen")
 
 Dos ajustes aprobados por el dueño, verificados por screenshot (desktop + móvil 390px) sobre la sesión admin.

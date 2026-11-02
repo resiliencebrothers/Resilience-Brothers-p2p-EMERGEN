@@ -5663,9 +5663,10 @@
       "emailNotVerified": "Verify your email before signing in."
     },
     "notice": {
-      "googleAccount": "This account was created with Google.",
+      "googleAccount": "This account was created with Google. Use «Continue with Google», or set a password to sign in with your email too.",
       "registerCta": "→ Create an account with this email",
-      "googleCta": "→ Continue with Google"
+      "googleCta": "→ Continue with Google",
+      "googleSetPasswordCta": "→ Set a password (sign in with email)"
     },
     "successPanel": {
       "resendPrompt": "Didn't get the email? Resend",

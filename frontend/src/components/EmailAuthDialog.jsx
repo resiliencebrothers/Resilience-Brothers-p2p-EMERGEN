@@ -327,6 +327,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               notice={notice}
               onSwitchToRegister={switchToRegisterFromNotice}
               onUseGoogle={useGoogleFromNotice}
+              onSetPassword={() => { setNotice(null); setFormError(""); setFormErrorKind(""); setMode("forgot"); }}
             />
 
             <GoogleAuthButton onClick={() => { onClose?.(); login(); }} />
