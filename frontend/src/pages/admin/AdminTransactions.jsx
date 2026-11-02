@@ -173,7 +173,7 @@ export default function AdminTransactions() {
         onExport={downloadExport}
       />
 
-      <TransactionsTable items={items} loading={loading} onRowClick={setSelected} />
+      <TransactionsTable items={items} loading={loading} onRowClick={setSelected} onGoToSource={goToSource} />
 
       <Pagination
         page={page}

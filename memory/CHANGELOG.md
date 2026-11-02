@@ -1,3 +1,11 @@
+## Changelog — 2 Nov 2026 (Red cripto como desplegable obligatorio + botón "Ver origen")
+
+Dos ajustes aprobados por el dueño, verificados por screenshot (desktop + móvil 390px) sobre la sesión admin.
+
+- **Red cripto = desplegable obligatorio** (`AdminPaymentAccounts.jsx`): al elegir una moneda cripto, el campo Red deja de ser texto libre y pasa a ser un `Select` con las MISMAS redes que el cliente puede elegir al depositar/retirar (`CRYPTO_NETWORKS` de `services/cryptoValidators.js` → Tron (TRC20) y BSC (BEP20)). Así la red de la cuenta siempre coincide con la del depósito (R-01) y nunca queda "sin red". Placeholder "Elige la red…", marca "· obligatorio", y bloqueo al guardar vacío (ya existente). Si una cuenta legada trae una red fuera de la lista (p. ej. ERC20), se conserva como opción "(heredado)" al editarla para no perder el dato. Para monedas fiat el campo sigue siendo texto libre opcional. i18n: `admin.paymentAccounts.networkSelectPh|networkLegacyTag` (ES/EN).
+- **Botón "Ver origen" en cada transacción** (`transactions/TransactionsTable.jsx` + `AdminTransactions.jsx`): cada fila del libro contable muestra un botón "Ver origen" (testid `tx-view-source-<ref_id>`) en la columna Ref que navega directo al registro exacto resaltado usando `routeForTx(tx)` (orden/depósito/retiro/fondo/lote con `?focus=<ref_id>`). `stopPropagation` para no abrir también el modal de detalle. i18n: `admin.transactions.viewSource` (ES/EN). Combina con el resaltado por ID ya extendido a todas las secciones.
+
+
 ## Changelog — 2 Nov 2026 (Enlace exacto en Retiros/Fondos/Lotes + red obligatoria en cuentas cripto)
 
 Dos mejoras aprobadas por el dueño, verificadas (backend por curl + frontend E2E iteration_389, 4/4 checks ejecutables PASS; badge "sin red" confirmado por screenshot con cuenta sembrada temporal).

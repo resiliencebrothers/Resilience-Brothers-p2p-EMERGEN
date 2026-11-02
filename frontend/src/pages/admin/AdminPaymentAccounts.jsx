@@ -14,6 +14,7 @@ import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog
 import AdminPageHeader from "@/components/AdminPageHeader";
 import { Plus, Edit2, Trash2, Download } from "lucide-react";
 import { toast } from "sonner";
+import { CRYPTO_NETWORKS } from "@/services/cryptoValidators";
 
 const empty = { currency_code: "", label: "", account_details: "", network: "", min_amount: "", max_amount: "", is_active: true };
 
@@ -44,6 +45,16 @@ export default function AdminPaymentAccounts() {
     currencies.filter((c) => (c.type || "").toLowerCase() === "crypto").map((c) => c.code),
   );
   const isCryptoAcc = cryptoCodes.has(form.currency_code);
+
+  // Para cuentas cripto la red se ELIGE de un desplegable con las MISMAS redes
+  // que el cliente puede seleccionar al depositar/retirar (CRYPTO_NETWORKS:
+  // TRC20/BEP20). Así la cuenta siempre coincide con el depósito (R-01) y nunca
+  // queda "sin red". Si una cuenta legada trae una red fuera de la lista
+  // (p. ej. ERC20), se conserva como opción marcada "(heredado)" al editarla.
+  const cryptoNetValues = CRYPTO_NETWORKS.map((n) => n.value);
+  const networkOptions = form.network && !cryptoNetValues.includes(form.network)
+    ? [{ value: form.network, label: `${form.network} ${t("admin.paymentAccounts.networkLegacyTag")}` }, ...CRYPTO_NETWORKS]
+    : CRYPTO_NETWORKS;
 
   const load = async () => {
     const [a, c] = await Promise.all([
@@ -232,18 +243,38 @@ export default function AdminPaymentAccounts() {
                 {t("admin.paymentAccounts.networkLabel")}
                 {isCryptoAcc ? <span className="text-amber-400 ml-1" data-testid="account-network-required">{t("admin.paymentAccounts.networkRequiredMark")}</span> : null}
               </Label>
-              <Input
-                data-testid="account-network"
-                value={form.network}
-                onChange={(e) => setForm({ ...form, network: e.target.value })}
-                placeholder={t("admin.paymentAccounts.networkPh")}
-                list="pa-network-suggestions"
-                maxLength={30}
-                className={`rounded-none mt-1 bg-[#0a0a0a] font-mono uppercase text-sm ${isCryptoAcc && !form.network.trim() ? "border-amber-500/60" : "border-white/10"}`}
-              />
-              <datalist id="pa-network-suggestions">
-                {COMMON_NETWORKS.map((n) => <option key={n} value={n} />)}
-              </datalist>
+              {isCryptoAcc ? (
+                <Select value={form.network} onValueChange={(v) => setForm({ ...form, network: v })}>
+                  <SelectTrigger
+                    data-testid="account-network-select"
+                    className={`rounded-none mt-1 bg-[#0a0a0a] font-mono uppercase text-sm h-10 ${!form.network.trim() ? "border-amber-500/60" : "border-white/10"}`}
+                  >
+                    <SelectValue placeholder={t("admin.paymentAccounts.networkSelectPh")} />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#0c0c0c] border border-white/10 rounded-none">
+                    {networkOptions.map((n) => (
+                      <SelectItem key={n.value} value={n.value} className="rounded-none" data-testid={`account-network-opt-${n.value}`}>
+                        {n.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <>
+                  <Input
+                    data-testid="account-network"
+                    value={form.network}
+                    onChange={(e) => setForm({ ...form, network: e.target.value })}
+                    placeholder={t("admin.paymentAccounts.networkPh")}
+                    list="pa-network-suggestions"
+                    maxLength={30}
+                    className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono uppercase text-sm"
+                  />
+                  <datalist id="pa-network-suggestions">
+                    {COMMON_NETWORKS.map((n) => <option key={n} value={n} />)}
+                  </datalist>
+                </>
+              )}
               <p className="text-[0.65rem] text-neutral-500 mt-1">{isCryptoAcc ? t("admin.paymentAccounts.networkHintCrypto") : t("admin.paymentAccounts.networkHint")}</p>
             </div>
             <div>

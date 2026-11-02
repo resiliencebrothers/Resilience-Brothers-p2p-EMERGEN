@@ -1,8 +1,8 @@
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { OriginBadge } from "./OriginBadge";
 
-export function TransactionsTable({ items, loading, onRowClick }) {
+export function TransactionsTable({ items, loading, onRowClick, onGoToSource }) {
   const { t } = useTranslation();
   const tx = (k) => t(`admin.transactions.${k}`);
   return (
@@ -81,7 +81,20 @@ export function TransactionsTable({ items, loading, onRowClick }) {
                 <td className="px-3 py-2 text-xs uppercase text-neutral-500">{it.method}</td>
                 <td className="px-3 py-2 text-xs uppercase text-neutral-500">{it.status}</td>
                 <td className="px-3 py-2 font-mono text-xs text-neutral-600">
-                  {it.ref_id?.slice(0, 6)}
+                  <div className="flex items-center gap-2">
+                    <span>{it.ref_id?.slice(0, 6)}</span>
+                    {it.ref_id ? (
+                      <button
+                        type="button"
+                        data-testid={`tx-view-source-${it.ref_id}`}
+                        onClick={(e) => { e.stopPropagation(); onGoToSource?.(it); }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#A78BFA] uppercase tracking-wider text-[0.6rem] hover:bg-[#8B5CF6]/20 transition-colors whitespace-nowrap"
+                        title={tx("viewSource")}
+                      >
+                        {tx("viewSource")} <ArrowUpRight className="w-3 h-3" />
+                      </button>
+                    ) : null}
+                  </div>
                 </td>
               </tr>
             ))}
