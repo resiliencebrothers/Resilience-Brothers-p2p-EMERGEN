@@ -88,6 +88,22 @@ async def all_withdrawals(request: Request,
     return docs
 
 
+@router.get("/admin/withdrawals/{wid}")
+async def get_withdrawal(wid: str, request: Request) -> Any:
+    """Foco por ID — un retiro concreto para enlazar al registro exacto desde
+    Transacciones aunque sea anterior a los últimos cargados. Respeta el
+    alcance del actor; 404 si no existe o queda fuera de alcance."""
+    actor = await require_permission(request, "withdrawals")
+    q = _withdrawals_query(actor, None, None, None)
+    if q is None:
+        raise HTTPException(status_code=404, detail="Retiro no encontrado.")
+    doc = await db.withdrawals.find_one({**q, "id": wid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Retiro no encontrado.")
+    await _attach_courier_status([doc])
+    return doc
+
+
 def _assert_paid_lock(actor: dict, withdrawal: dict, new_status: str) -> None:
     """Block non-admins from un-marking an already-paid withdrawal."""
     if (withdrawal["status"] == "paid"

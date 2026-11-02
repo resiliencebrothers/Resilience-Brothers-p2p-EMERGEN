@@ -37,6 +37,14 @@ export default function AdminPaymentAccounts() {
   const [form, setForm] = useState(empty);
   const [pendingTotp, setPendingTotp] = useState(null);
 
+  // iter(crypto-net) — una cuenta de cobro es cripto si su moneda es type crypto.
+  // Para esas, la red es OBLIGATORIA: sin red el resolutor cripto (R-01) la
+  // descarta y quedaría fuera de la conciliación.
+  const cryptoCodes = new Set(
+    currencies.filter((c) => (c.type || "").toLowerCase() === "crypto").map((c) => c.code),
+  );
+  const isCryptoAcc = cryptoCodes.has(form.currency_code);
+
   const load = async () => {
     const [a, c] = await Promise.all([
       axios.get(`${API}/admin/payment-accounts`, { withCredentials: true }),
@@ -60,6 +68,10 @@ export default function AdminPaymentAccounts() {
   const save = () => {
     if (!form.currency_code || !form.label.trim() || !form.account_details.trim()) {
       toast.error(t("admin.paymentAccounts.toastError"));
+      return;
+    }
+    if (isCryptoAcc && !form.network.trim()) {
+      toast.error(t("admin.paymentAccounts.networkRequiredCrypto"));
       return;
     }
     setPendingTotp(buildPayload());
@@ -160,6 +172,15 @@ export default function AdminPaymentAccounts() {
                         {a.network}
                       </span>
                     ) : null}
+                    {!a.network && cryptoCodes.has(a.currency_code) ? (
+                      <span
+                        className="text-[0.6rem] font-mono px-1.5 py-0.5 border border-amber-500/40 bg-amber-500/10 text-amber-400 uppercase tracking-widest"
+                        data-testid={`account-missing-network-${a.id}`}
+                        title={t("admin.paymentAccounts.missingNetworkHint")}
+                      >
+                        {t("admin.paymentAccounts.missingNetwork")}
+                      </span>
+                    ) : null}
                   </div>
                 </td>
                 <td className="px-4 py-3 text-xs text-neutral-400 max-w-xs">
@@ -207,7 +228,10 @@ export default function AdminPaymentAccounts() {
               <Input data-testid="account-label" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder={t("admin.paymentAccounts.labelPh")} maxLength={80} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">{t("admin.paymentAccounts.networkLabel")}</Label>
+              <Label className="micro-label text-neutral-500">
+                {t("admin.paymentAccounts.networkLabel")}
+                {isCryptoAcc ? <span className="text-amber-400 ml-1" data-testid="account-network-required">{t("admin.paymentAccounts.networkRequiredMark")}</span> : null}
+              </Label>
               <Input
                 data-testid="account-network"
                 value={form.network}
@@ -215,12 +239,12 @@ export default function AdminPaymentAccounts() {
                 placeholder={t("admin.paymentAccounts.networkPh")}
                 list="pa-network-suggestions"
                 maxLength={30}
-                className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono uppercase text-sm"
+                className={`rounded-none mt-1 bg-[#0a0a0a] font-mono uppercase text-sm ${isCryptoAcc && !form.network.trim() ? "border-amber-500/60" : "border-white/10"}`}
               />
               <datalist id="pa-network-suggestions">
                 {COMMON_NETWORKS.map((n) => <option key={n} value={n} />)}
               </datalist>
-              <p className="text-[0.65rem] text-neutral-500 mt-1">{t("admin.paymentAccounts.networkHint")}</p>
+              <p className="text-[0.65rem] text-neutral-500 mt-1">{isCryptoAcc ? t("admin.paymentAccounts.networkHintCrypto") : t("admin.paymentAccounts.networkHint")}</p>
             </div>
             <div>
               <Label className="micro-label text-neutral-500">{t("admin.paymentAccounts.detailsLabel")}</Label>

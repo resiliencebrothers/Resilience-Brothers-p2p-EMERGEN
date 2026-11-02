@@ -1415,6 +1415,7 @@
     },
     "withdrawals": {
       "eyebrow": "/ Withdrawals",
+      "focusNotFound": "That withdrawal wasn't found or is outside your currency scope.",
       "title": "Withdrawals & Redemptions",
       "sectionWithdrawals": "Withdrawals",
       "sectionRedemptions": "Merchandise redemptions",
@@ -1898,6 +1899,7 @@
     },
     "companyFunds": {
       "eyebrow": "/ Company Fund",
+      "focusNotFound": "That movement wasn't found or is outside your currency scope.",
       "totalUsdt": {
         "eyebrow": "Company-wide total",
         "availableLabel": "Available (net — minus what we owe clients)",
@@ -2303,6 +2305,11 @@
       "networkLabel": "Network / Method (shown to the client)",
       "networkPh": "E.g. BEP20, TRC20, ERC20, SEPA, Zelle…",
       "networkHint": "Rendered as a yellow warning above the address so the client can't send through the wrong chain. Leave empty when not applicable.",
+      "networkHintCrypto": "Required for crypto accounts: pick the exact network (TRC20, ERC20, BEP20…). Without a network the account can't be used or reconciled.",
+      "networkRequiredCrypto": "Crypto collection accounts require a network (e.g. TRC20, ERC20, BEP20).",
+      "networkRequiredMark": "· required",
+      "missingNetwork": "no network",
+      "missingNetworkHint": "Crypto account without a network: edit it and assign one (TRC20/ERC20/BEP20) so it enters reconciliation.",
       "detailsLabel": "Details the client will see",
       "detailsPh": "Name, email / IBAN, bank, instructions...",
       "minLabel": "Minimum amount",
@@ -2894,6 +2901,7 @@
   },
   "adminVipBatches": {
     "eyebrow": "ORDERS",
+    "focusNotFound": "That batch item wasn't found or is outside your scope.",
     "title": "VIP Batches",
     "loadError": "Could not load VIP batches",
     "actionError": "Could not process the action",

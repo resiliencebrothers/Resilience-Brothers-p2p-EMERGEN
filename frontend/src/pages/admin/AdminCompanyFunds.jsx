@@ -5,7 +5,7 @@
  * Presentation is `FundCards`, `CompanyWithdrawalsTable` (tabla unificada de
  * depósitos y retiros), `NewWithdrawalDialog` y `AdjustmentDialog` (depósito).
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { Scale } from "lucide-react";
@@ -31,6 +31,15 @@ export default function AdminCompanyFunds() {
   const navigate = useNavigate();
   const cf = useCompanyFunds();
   const [cashBoxOpen, setCashBoxOpen] = useState(false);
+
+  // R-02 (fondos) — desplaza y resalta el movimiento enlazado desde Transacciones.
+  useEffect(() => {
+    if (!cf.focusId) return;
+    const el = document.querySelector(
+      `[data-testid="company-withdrawal-row-${cf.focusId}"], [data-testid="fund-movement-row-${cf.focusId}"]`,
+    );
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [cf.focusId, cf.moveRows]);
 
   return (
     <div data-testid="admin-company-funds" className="space-y-8">
@@ -60,6 +69,7 @@ export default function AdminCompanyFunds() {
       <CompanyWithdrawalsTable
         rows={cf.moveRows}
         total={cf.moveTotal}
+        focusId={cf.focusId}
         page={cf.movePage}
         setPage={cf.setMovePage}
         isAdmin={cf.isAdmin}

@@ -1801,6 +1801,27 @@ async def unified_fund_movements(request: Request, tipo: str = "all",
             "skip": skip, "limit": limit}
 
 
+@router.get("/admin/company-funds/movements/{mid}")
+async def unified_fund_movement_by_id(mid: str, request: Request) -> Any:
+    """Foco por ID — un movimiento del fondo concreto (retiro o ajuste) para
+    enlazar al registro exacto desde Transacciones aunque esté en otra página.
+    Respeta el alcance de monedas del actor; 404 si no existe o fuera de él."""
+    actor = await require_permission(request, "company_funds")
+    scope = _actor_currency_scope(actor)
+    w = await db.company_withdrawals.find_one({"id": mid}, {"_id": 0})
+    if w:
+        if scope and (w.get("currency") or "").upper() not in scope:
+            raise HTTPException(status_code=404, detail="Movimiento no encontrado.")
+        return {"kind": "withdrawal", **w}
+    a = await db.company_fund_adjustments.find_one({"id": mid}, {"_id": 0})
+    if a:
+        if scope and (a.get("currency") or "").upper() not in scope:
+            raise HTTPException(status_code=404, detail="Movimiento no encontrado.")
+        kind = "deposit" if a.get("adjustment_type") == "inflow" else "adjust_out"
+        return {"kind": kind, **a}
+    raise HTTPException(status_code=404, detail="Movimiento no encontrado.")
+
+
 @router.get("/admin/company-funds/adjustments")
 async def list_company_fund_adjustments(
     request: Request, currency: Optional[str] = None, limit: int = 100,

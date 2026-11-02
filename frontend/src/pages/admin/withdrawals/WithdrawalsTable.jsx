@@ -9,7 +9,7 @@ const STATUS_STYLES = {
   pending: "bg-neutral-700/20 text-neutral-400 border-neutral-700/40",
 };
 
-export default function WithdrawalsTable({ items, statusLabel, onManage }) {
+export default function WithdrawalsTable({ items, statusLabel, onManage, focusId }) {
   const { t } = useTranslation();
   return (
     <div className="tactile-card overflow-x-auto overflow-y-auto max-h-[70vh]" data-testid="admin-withdrawals-scroll">
@@ -32,7 +32,7 @@ export default function WithdrawalsTable({ items, statusLabel, onManage }) {
             </tr>
           )}
           {items.map((w) => (
-            <tr key={w.id} className="border-b border-white/5">
+            <tr key={w.id} className={`border-b border-white/5${w.id === focusId ? " ring-2 ring-[#8B5CF6] ring-inset bg-[#8B5CF6]/5" : ""}`} data-testid={`admin-withdrawal-row-${w.id}`}>
               <td className="px-3 py-3">{w.user_name}</td>
               <td className="px-3 py-3 font-mono text-[#8B5CF6]">{w.amount_usd}</td>
               <td className="px-3 py-3 font-mono">{w.currency || "USD"}</td>

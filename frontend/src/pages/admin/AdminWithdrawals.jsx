@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
@@ -16,6 +16,8 @@ import WithdrawalDialog from "./withdrawals/WithdrawalDialog";
 export default function AdminWithdrawals() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [sp] = useSearchParams();
+  const focusId = sp.get("focus");
 
   const statusLabel = (status, method) => {
     if (method === "cash") {
@@ -93,6 +95,29 @@ export default function AdminWithdrawals() {
   useEffect(() => { load(); }, [load]);
   // iter159 — new/updated withdrawals appear without F5.
   useLiveRefresh(load, ["withdrawal_created", "withdrawal_status_changed"], 800);
+
+  // Foco por ID — el retiro enlazado desde Transacciones puede estar fuera de
+  // los cargados: se trae por ID y se fija al inicio; 404 → aviso.
+  useEffect(() => {
+    if (!focusId) return undefined;
+    if (items.some((w) => w.id === focusId)) return undefined;
+    let cancelled = false;
+    axios.get(`${API}/admin/withdrawals/${focusId}`, { withCredentials: true })
+      .then((r) => {
+        if (cancelled || !r.data) return;
+        setItems((prev) => (prev.some((w) => w.id === focusId) ? prev : [r.data, ...prev]));
+      })
+      .catch((err) => {
+        if (!cancelled && err?.response?.status === 404) toast.error(t("admin.withdrawals.focusNotFound"));
+      });
+    return () => { cancelled = true; };
+  }, [focusId, items, t]);
+
+  useEffect(() => {
+    if (!focusId) return;
+    const el = document.querySelector(`[data-testid="admin-withdrawal-row-${focusId}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusId, items]);
 
   const openDialog = (w) => {
     setOpen(w);
@@ -242,7 +267,7 @@ export default function AdminWithdrawals() {
           currencies={currencies}
           resultCount={items.length}
         />
-        <WithdrawalsTable items={items} statusLabel={statusLabel} onManage={openDialog} />
+        <WithdrawalsTable items={items} statusLabel={statusLabel} onManage={openDialog} focusId={focusId} />
       </div>
 
       {redemptionsAllowed && (

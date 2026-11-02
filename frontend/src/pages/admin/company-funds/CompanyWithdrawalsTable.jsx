@@ -35,6 +35,7 @@ const TYPE_STYLES = {
 
 export default function CompanyWithdrawalsTable({
   rows, total, page, setPage, isAdmin,
+  focusId,
   createCurrencies, currencies,
   statusFilter, setStatusFilter,
   tipoFilter, setTipoFilter,
@@ -207,6 +208,7 @@ export default function CompanyWithdrawalsTable({
                 key={r.key}
                 w={r.data}
                 isAdmin={isAdmin}
+                focused={r.data.id === focusId}
                 typeLabel={TYPE_LABELS.withdrawal}
                 statusLabel={STATUS_LABELS[r.data.status]}
                 onRequestStatus={onRequestStatus}
@@ -218,6 +220,7 @@ export default function CompanyWithdrawalsTable({
                 a={r.data}
                 kind={r.kind}
                 isAdmin={isAdmin}
+                focused={r.data.id === focusId}
                 typeLabel={TYPE_LABELS[r.kind]}
                 t={t}
               />
@@ -256,7 +259,7 @@ export default function CompanyWithdrawalsTable({
   );
 }
 
-function WithdrawalRow({ w, isAdmin, typeLabel, statusLabel, onRequestStatus, t }) {
+function WithdrawalRow({ w, isAdmin, focused, typeLabel, statusLabel, onRequestStatus, t }) {
   // iter286 — recibo PDF firmable de un retiro pagado.
   const downloadReceipt = async () => {
     try {
@@ -275,7 +278,7 @@ function WithdrawalRow({ w, isAdmin, typeLabel, statusLabel, onRequestStatus, t 
     }
   };
   return (
-    <tr className="border-b border-white/5" data-testid={`company-withdrawal-row-${w.id}`}>
+    <tr className={`border-b border-white/5${focused ? " ring-2 ring-[#8B5CF6] ring-inset bg-[#8B5CF6]/5" : ""}`} data-testid={`company-withdrawal-row-${w.id}`}>
       <td className="px-4 py-3">
         <span className={`text-[0.65rem] uppercase border px-2 py-1 whitespace-nowrap ${TYPE_STYLES.withdrawal}`}>
           {typeLabel}
@@ -351,7 +354,7 @@ function WithdrawalRow({ w, isAdmin, typeLabel, statusLabel, onRequestStatus, t 
 
 // iter277 — fila de depósito / retiro-por-ajuste (solo lectura: ya afectó el
 // balance al registrarse).
-function AdjustmentRow({ a, kind, isAdmin, typeLabel, t }) {
+function AdjustmentRow({ a, kind, isAdmin, focused, typeLabel, t }) {
   const isDeposit = kind === "deposit";
   const methodLabel = {
     cash: t("admin.companyFunds.methodCash"),
@@ -359,7 +362,7 @@ function AdjustmentRow({ a, kind, isAdmin, typeLabel, t }) {
     crypto: t("admin.companyFunds.methodCrypto"),
   }[a.method] || a.method;
   return (
-    <tr className="border-b border-white/5" data-testid={`fund-movement-row-${a.id}`}>
+    <tr className={`border-b border-white/5${focused ? " ring-2 ring-[#8B5CF6] ring-inset bg-[#8B5CF6]/5" : ""}`} data-testid={`fund-movement-row-${a.id}`}>
       <td className="px-4 py-3">
         <span className={`text-[0.65rem] uppercase border px-2 py-1 whitespace-nowrap ${TYPE_STYLES[kind]}`}>
           {typeLabel}

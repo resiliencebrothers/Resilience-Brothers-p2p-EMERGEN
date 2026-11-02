@@ -156,6 +156,20 @@ def _assert_range(payload: PaymentAccountCreate) -> None:
         )
 
 
+async def _assert_crypto_network(payload: PaymentAccountCreate) -> None:
+    """Las cuentas de cobro cripto DEBEN declarar su red (TRC20/ERC20/BEP20/…):
+    sin red el resolutor de depósitos cripto (R-01) las descarta y quedarían
+    fuera de la conciliación. Se bloquea la creación/edición sin red."""
+    cur = await db.currencies.find_one(
+        {"code": payload.currency_code}, {"_id": 0, "type": 1})
+    if cur and (cur.get("type") or "").lower() == "crypto" and not (payload.network or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail=("Las cuentas de cobro cripto requieren una red "
+                    "(p. ej. TRC20, ERC20, BEP20)."),
+        )
+
+
 @router.get("/payment-accounts/resolve")
 async def resolve_payment_account(
     request: Request, currency: str, amount: float = 0.0,
@@ -527,9 +541,10 @@ async def create_payment_account(
     payload: PaymentAccountCreate, request: Request,
 ) -> Any:
     actor = await require_permission(request, "payment_accounts")
+    _assert_range(payload)
+    await _assert_crypto_network(payload)
     await _enforce_totp_step_up(actor, payload.totp_code,
                                 action_label="crear cuenta de cobro")
-    _assert_range(payload)
     doc = {
         "id": f"payacc_{uuid.uuid4().hex[:12]}",
         **payload.model_dump(exclude={"totp_code"}),
@@ -555,9 +570,10 @@ async def update_payment_account(
     account_id: str, payload: PaymentAccountCreate, request: Request,
 ) -> Any:
     actor = await require_permission(request, "payment_accounts")
+    _assert_range(payload)
+    await _assert_crypto_network(payload)
     await _enforce_totp_step_up(actor, payload.totp_code,
                                 action_label="editar cuenta de cobro")
-    _assert_range(payload)
     old = await db.payment_accounts.find_one({"id": account_id}, {"_id": 0})
     if not old:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada.")

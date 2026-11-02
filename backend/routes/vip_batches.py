@@ -724,6 +724,32 @@ async def admin_list_vip_batches(request: Request, status: Optional[str] = None,
             "pair_counts": pair_counts}
 
 
+@router.get("/admin/vip-batches/items/{item_id}")
+async def admin_get_vip_batch_item(item_id: str, request: Request) -> Any:
+    """Foco por ID — un ítem de lote VIP concreto para enlazar al registro
+    exacto desde Transacciones. Respeta el alcance de pares del empleado; 404
+    si no existe o queda fuera de alcance."""
+    staff = await require_permission(request, "orders")
+    it = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0})
+    if not it or not staff_pair_allowed(staff, it):
+        raise HTTPException(status_code=404, detail="Ítem de lote no encontrado.")
+    ids = {it["vip_user_id"]}
+    if it.get("reviewed_by"):
+        ids.add(it["reviewed_by"])
+    users_by_id: dict[str, dict] = {}
+    async for u in db.users.find({"user_id": {"$in": list(ids)}},
+                                  {"_id": 0, "user_id": 1, "name": 1, "email": 1}):
+        users_by_id[u["user_id"]] = u
+    it["pair"] = (f"{it.get('from_code')}→{it.get('to_code')}"
+                  if it.get("to_code") else None)
+    vip = users_by_id.get(it["vip_user_id"], {})
+    it["vip_name"] = vip.get("name", "")
+    it["vip_email"] = vip.get("email", "")
+    reviewer = users_by_id.get(it.get("reviewed_by") or "", {})
+    it["reviewed_by_name"] = reviewer.get("name") or reviewer.get("email") or None
+    return serialize_doc(it)
+
+
 @router.post("/admin/vip-batches/items/{item_id}/approve")
 async def admin_approve_vip_item(item_id: str, request: Request) -> Any:
     staff = await require_permission(request, "orders")

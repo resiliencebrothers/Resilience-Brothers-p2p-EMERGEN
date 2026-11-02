@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
+import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { API } from "@/App";
@@ -26,6 +27,8 @@ const LIVE_EVENTS = ["new_vip_batch", "vip_batch_item_decision"];
  */
 export default function AdminVipBatchItems({ onChanged }) {
   const { t } = useTranslation();
+  const [sp] = useSearchParams();
+  const focusId = sp.get("focus");
   const [items, setItems] = useState([]);
   const [statusFilter, setStatusFilter] = useState("pending");
   const [loading, setLoading] = useState(true);
@@ -86,6 +89,29 @@ export default function AdminVipBatchItems({ onChanged }) {
 
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(load, LIVE_EVENTS);
+
+  // Foco por ID — el ítem enlazado desde Transacciones puede estar en otro
+  // estado/página: se trae por ID y se fija al inicio; 404 → aviso.
+  useEffect(() => {
+    if (!focusId || loading) return undefined;
+    if (items.some((it) => it.id === focusId)) return undefined;
+    let cancelled = false;
+    axios.get(`${API}/admin/vip-batches/items/${focusId}`, { withCredentials: true })
+      .then((r) => {
+        if (cancelled || !r.data) return;
+        setItems((prev) => (prev.some((it) => it.id === focusId) ? prev : [r.data, ...prev]));
+      })
+      .catch((err) => {
+        if (!cancelled && err?.response?.status === 404) toast.error(t("adminVipBatches.focusNotFound"));
+      });
+    return () => { cancelled = true; };
+  }, [focusId, loading, items, t]);
+
+  useEffect(() => {
+    if (!focusId || loading) return;
+    const el = document.querySelector(`[data-testid="vip-item-row-${focusId}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusId, loading, items]);
 
   useEffect(() => () => {
     if (abortRef.current) {
@@ -196,7 +222,7 @@ export default function AdminVipBatchItems({ onChanged }) {
               </td></tr>
             )}
             {!loading && items.map((it) => (
-              <tr key={it.id} className="border-b border-white/5" data-testid={`vip-item-row-${it.id}`}>
+              <tr key={it.id} className={`border-b border-white/5${it.id === focusId ? " ring-2 ring-[#8B5CF6] ring-inset bg-[#8B5CF6]/5" : ""}`} data-testid={`vip-item-row-${it.id}`}>
                 <td className="px-4 py-3">
                   <div className="text-white text-xs truncate max-w-[140px]">{it.vip_name || "—"}</div>
                   <div className="text-[0.6rem] text-neutral-500 font-mono">{it.vip_user_id.slice(-8)}</div>

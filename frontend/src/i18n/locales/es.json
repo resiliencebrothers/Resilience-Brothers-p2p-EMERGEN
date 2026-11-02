@@ -1415,6 +1415,7 @@
     },
     "withdrawals": {
       "eyebrow": "/ Retiros",
+      "focusNotFound": "No se encontró ese retiro o está fuera de tu alcance de monedas.",
       "title": "Retiros & Canjes",
       "sectionWithdrawals": "Retiros",
       "sectionRedemptions": "Canjes de Mercancía",
@@ -1898,6 +1899,7 @@
     },
     "companyFunds": {
       "eyebrow": "/ Fondo de la Empresa",
+      "focusNotFound": "No se encontró ese movimiento o está fuera de tu alcance de monedas.",
       "totalUsdt": {
         "eyebrow": "Balance total de la empresa",
         "availableLabel": "Disponible (neto — descontando lo que debemos a clientes)",
@@ -2303,6 +2305,11 @@
       "networkLabel": "Red / Método (visible al cliente)",
       "networkPh": "Ej. BEP20, TRC20, ERC20, SEPA, Zelle…",
       "networkHint": "Aparece con un aviso en amarillo sobre la dirección para que el cliente no envíe por la red equivocada. Déjalo vacío si no aplica.",
+      "networkHintCrypto": "Obligatorio para cuentas cripto: elige la red exacta (TRC20, ERC20, BEP20…). Sin red, la cuenta no se puede usar ni conciliar.",
+      "networkRequiredCrypto": "Las cuentas de cobro cripto requieren una red (p. ej. TRC20, ERC20, BEP20).",
+      "networkRequiredMark": "· obligatorio",
+      "missingNetwork": "sin red",
+      "missingNetworkHint": "Cuenta cripto sin red: edítala y asígnale una (TRC20/ERC20/BEP20) para que entre en la conciliación.",
       "detailsLabel": "Datos que verá el cliente",
       "detailsPh": "Nombre, email / IBAN, banco, instrucciones...",
       "minLabel": "Monto mínimo",
@@ -2894,6 +2901,7 @@
   },
   "adminVipBatches": {
     "eyebrow": "ÓRDENES",
+    "focusNotFound": "No se encontró ese ítem de lote o está fuera de tu alcance.",
     "title": "Lotes VIP",
     "loadError": "No se pudieron cargar los lotes VIP",
     "actionError": "No se pudo procesar la acción",

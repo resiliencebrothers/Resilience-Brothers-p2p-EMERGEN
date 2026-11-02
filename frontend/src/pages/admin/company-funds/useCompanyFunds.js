@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { handleTotpError } from "@/components/TotpPromptDialog";
@@ -40,6 +40,8 @@ export function useCompanyFunds() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const [sp] = useSearchParams();
+  const focusId = sp.get("focus");
 
   const [funds, setFunds] = useState([]);
   const [items, setItems] = useState([]);
@@ -128,6 +130,37 @@ export function useCompanyFunds() {
     }, 300);
     return () => { alive = false; clearTimeout(tmr); };
   }, [tipoFilter, statusFilter, beneficiaryQuery, movePage, moveReload]);
+
+  // R-02 (fondos) — el movimiento buscado desde Transacciones puede estar en
+  // otra página o fuera de los filtros activos: se trae por ID y se fija al
+  // inicio de la tabla para que el enlace apunte al registro exacto.
+  useEffect(() => {
+    if (!focusId) return undefined;
+    if (moveRows.some((r) => r.data?.id === focusId)) return undefined;
+    let alive = true;
+    axios
+      .get(`${API}/admin/company-funds/movements/${focusId}`, { withCredentials: true })
+      .then((r) => {
+        if (!alive || !r.data?.id) return;
+        const row = r.data;
+        setMoveRows((prev) => (
+          prev.some((x) => x.data?.id === focusId)
+            ? prev
+            : [{
+                kind: row.kind,
+                key: `${row.kind === "withdrawal" ? "w" : "a"}-${row.id}`,
+                created_at: row.created_at || "",
+                data: row,
+              }, ...prev]
+        ));
+      })
+      .catch((err) => {
+        if (alive && err?.response?.status === 404) {
+          toast.error(t("admin.companyFunds.focusNotFound"));
+        }
+      });
+    return () => { alive = false; };
+  }, [focusId, moveRows, t]);
 
   // iter277 — opciones de cuenta (con método) para el prompt de pago.
   useEffect(() => {
@@ -323,5 +356,6 @@ export function useCompanyFunds() {
     createDenoms, setCreateDenoms,
     createCurrencies, adjustmentCurrencies,
     load, handleInvoiceUpload, submitCreate, confirmStatusWithTotp,
+    focusId,
   };
 }
