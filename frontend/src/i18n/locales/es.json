@@ -5581,7 +5581,8 @@
       "login": "Iniciar sesión",
       "register": "Crear cuenta",
       "forgot": "Enviar enlace",
-      "loading": "..."
+      "loading": "...",
+      "verifying": "Verificando…"
     },
     "google": "Continuar con Google",
     "or": "o",
@@ -5626,6 +5627,7 @@
       "failed": "No pudimos reenviar el correo. Intenta de nuevo."
     },
     "resending": "Reenviando...",
+    "resendLink": "Reenviar correo de verificación",
     "errors": {
       "invalidCredentials": "Correo o contraseña incorrectos.",
       "credentialsHelp": "Revisa que el email y la contraseña sean correctos (ojo a las mayúsculas).",

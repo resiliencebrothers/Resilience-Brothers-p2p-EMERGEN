@@ -55,6 +55,10 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const [captchaCfg, setCaptchaCfg] = useState(null);
   const [captchaToken, setCaptchaToken] = useState("");
   const [captchaKey, setCaptchaKey] = useState(0);
+  // iter247 — token obtenido BAJO DEMANDA al enviar (getResponsePromise); este
+  // estado solo gobierna el texto "verificando…" del botón.
+  const [captchaVerifying, setCaptchaVerifying] = useState(false);
+  const turnstileRef = useRef(null);
 
   useEffect(() => {
     if (!open || captchaCfg !== null) return;
@@ -75,7 +79,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     setName(""); setPhone(""); setRemember24h(false); setLoading(false);
     setSuccessMsg(""); setNotice(null); setMode("login"); setAccountType("personal");
     setFormError(""); setFormErrorKind(""); setFailCount(0);
-    setCaptchaToken(""); setCaptchaKey((k) => k + 1);
+    setCaptchaToken(""); setCaptchaKey((k) => k + 1); setCaptchaVerifying(false);
   };
 
   // When the dialog opens with a prefilled email (from the verify-email flow),
@@ -161,25 +165,47 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       toast.error(t("auth.errors.passwordsNoMatch"));
       return;
     }
-    // Captcha obligatorio: si la verificación "No soy un robot" aún no se ha
-    // completado, NO dejamos el botón inerte sin feedback (el usuario creía que
-    // su contraseña estaba mal). Mostramos un aviso claro que lo guía al widget.
-    if (captchaCfg?.enabled && captchaCfg?.enforced && mode !== "forgot" && !captchaToken) {
-      setFormError(t("auth.errors.captchaIncomplete"));
-      setFormErrorKind("captcha");
-      toast.error(t("auth.errors.captchaIncompleteToast"));
-      return;
-    }
     setLoading(true);
     setFormError("");
     setFormErrorKind("");
+
+    // iter247 — captcha BAJO DEMANDA: pedimos un token FRESCO al enviar (el
+    // token Turnstile es de un solo uso). Ya NO bloqueamos el envío cuando el
+    // token aún no existe: así, si el captcha se resuelve en silencio, la
+    // petición llega al backend y una contraseña incorrecta muestra "correo o
+    // contraseña incorrectos", no el aviso del captcha. Solo mostramos el
+    // mensaje del captcha si la verificación realmente falla o expira.
+    let freshCaptcha = "";
+    const captchaActive = captchaCfg?.enabled && captchaCfg?.enforced && mode !== "forgot";
+    if (captchaActive) {
+      try {
+        const widget = turnstileRef.current;
+        if (!widget) throw new Error("captcha-not-ready");
+        setCaptchaVerifying(true);
+        widget.execute();
+        freshCaptcha = await widget.getResponsePromise();
+      } catch {
+        setCaptchaVerifying(false);
+        setLoading(false);
+        setFormError(t("auth.errors.captchaFailed"));
+        setFormErrorKind("captcha");
+        toast.error(t("auth.errors.captchaFailed"));
+        turnstileRef.current?.reset();
+        setCaptchaToken("");
+        return;
+      }
+      setCaptchaVerifying(false);
+    } else if (captchaCfg?.enabled && captchaToken) {
+      freshCaptcha = captchaToken; // captcha opcional (no obligatorio)
+    }
+
     try {
       if (mode === "forgot") {
         await axios.post(`${API}/auth/forgot-password?lang=${langQS}`, { email: email.trim() });
         setSuccessMsg(t("auth.success.forgotSent"));
         return;
       }
-      const captcha = captchaCfg?.enabled && captchaToken ? { captcha_token: captchaToken } : {};
+      const captcha = freshCaptcha ? { captcha_token: freshCaptcha } : {};
       if (mode === "register") {
         const body = { email: email.trim(), password, name: name.trim(), phone: phone.trim(), account_type: accountType, ...captcha };
         await axios.post(`${API}/auth/register?lang=${langQS}`, body, { withCredentials: true });
@@ -215,11 +241,15 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       } else {
         handleAuthError(err);
       }
-      // iter246 — el token Turnstile es de un solo uso: regenerar tras fallo.
-      setCaptchaToken("");
-      setCaptchaKey((k) => k + 1);
     } finally {
       setLoading(false);
+      // iter247 — el token Turnstile es de un solo uso: lo rearmamos con
+      // reset() (NO re-montando con key, que provoca una carrera). El próximo
+      // intento vuelve a pedir un token fresco con getResponsePromise().
+      if (captchaCfg?.enabled) {
+        setCaptchaToken("");
+        turnstileRef.current?.reset();
+      }
     }
   };
 
@@ -401,8 +431,9 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                 <div className="flex justify-center">
                   <Turnstile
                     key={captchaKey}
+                    ref={turnstileRef}
                     siteKey={captchaCfg.site_key}
-                    options={{ theme: getTheme() === "light" ? "light" : "dark", language: (i18n.language || "es").split("-")[0], appearance: "interaction-only" }}
+                    options={{ theme: getTheme() === "light" ? "light" : "dark", language: (i18n.language || "es").split("-")[0], appearance: "interaction-only", execution: "execute", retry: "auto", refreshExpired: "auto" }}
                     onSuccess={(tok) => { setCaptchaToken(tok); if (formErrorKind === "captcha") { setFormError(""); setFormErrorKind(""); } }}
                     onExpire={() => setCaptchaToken("")}
                     onError={() => setCaptchaToken("")}
@@ -417,7 +448,9 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               disabled={loading}
               className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12"
             >
-              {loading ? t("auth.submit.loading") : t(`auth.submit.${mode}`)}
+              {captchaVerifying
+                ? t("auth.submit.verifying")
+                : loading ? t("auth.submit.loading") : t(`auth.submit.${mode}`)}
             </Button>
               </>
             )}
@@ -452,7 +485,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                     disabled={resending}
                     className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 disabled:opacity-50"
                   >
-                    {resending ? t("auth.resending") : t("auth.resend")}
+                    {resending ? t("auth.resending") : t("auth.resendLink")}
                   </button>
                 </>
               )}

@@ -1,3 +1,15 @@
+## Changelog — 2 Nov 2026 (Fix login: contraseña incorrecta mostraba el aviso del captcha)
+
+Bug reportado (video): al escribir mal la contraseña aparecía «Completa la verificación 'No soy un robot'» en lugar de «Correo o contraseña incorrectos».
+
+- **Causa raíz**: `TURNSTILE_ENFORCED=true` con clave real; el widget estaba en `appearance:"interaction-only"` (invisible, token emitido con retraso) y el frontend **pre-bloqueaba** el envío con el aviso del captcha cuando el token aún no existía (o quedaba obsoleto tras un intento, por ser de un solo uso). Confirmado por curl: sin token + enforced → `CAPTCHA_REQUIRED`; con captcha válido → error de credenciales real (401).
+- **Fix** (`components/EmailAuthDialog.jsx`, patrón del integration playbook de Cloudflare Turnstile + `@marsidev/react-turnstile` v1.6.1): se eliminó el pre-bloqueo. Ahora al enviar se obtiene un token **fresco bajo demanda** con `turnstileRef.execute()` + `await getResponsePromise()` (botón «Verificando…»); la petición siempre llega al backend, por lo que una contraseña incorrecta devuelve y muestra «Correo o contraseña incorrectos». El token se rearma por intento con `reset()` (sin re-montar por `key`, que causaba carrera). Opciones del widget: `execution:"execute"`, `retry:"auto"`, `refreshExpired:"auto"`. El mensaje del captcha solo aparece si la verificación realmente falla/expira.
+- **Fix secundario** (mismo diálogo): el enlace de reenvío usaba `t("auth.resend")` que es un objeto → mostraba «key 'auth.resend' returned an object». Añadida la clave string `auth.resendLink` (ES/EN) y corregido el botón. Verificado en pantalla (el error ya no aparece).
+- **Verificación**: backend por curl (contrato de errores), compila sin errores, paridad i18n ES/EN, screenshot del diálogo OK. El e2e completo del widget real de Turnstile NO es reproducible en el preview headless (Cloudflare exige challenge interactivo); los navegadores de usuarios reales sí lo resuelven (resolución silenciosa para la mayoría).
+- **Despliegue**: en PREVIEW. Requiere **volver a publicar** para producción.
+
+
+
 ## Changelog — 31 Oct 2026 (Conciliación por cuenta — panel read-only en Cuentas de cobro)
 
 A petición del usuario tras los arreglos de la auditoría: un panel para **cuadrar el banco de un vistazo**, agrupando TODO el dinero que entró a cada cuenta de cobro.
