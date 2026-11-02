@@ -1,3 +1,23 @@
+## Changelog — 2 Nov 2026 (Dictamen ed7091e — defectos residuales R-01 y R-02)
+
+El dictamen actualizado confirmó CO-01/02/03, identificadores y navegación. Quedaban dos defectos residuales, ahora corregidos y verificados (pytest 30/30 en `test_iter384_deposit_collection_account.py` + test directo `manual_co01_network_resolution.py` PASS + frontend E2E 100% iteration_388).
+
+- **R-01 (ALTA) — red desconocida ya no se acepta en cripto**:
+  - `_resolve_deposit_payment_account` (`routes/deposits.py`): para cripto ahora EXIGE red explícita y una cuenta ESTRUCTURADA de esa misma red en TODA ruta. Ya no recurre a la cuenta legada de texto libre (sin red) cuando no hay cuentas estructuradas; sin red o sin cuenta compatible → 400 pidiendo configurarla.
+  - `admin_set_deposit_payment_account`: para depósitos cripto rechaza (422) la rama legada y las cuentas sin red; exige coincidencia exacta de red (antes solo rechazaba si ambas redes existían y diferían, dejando pasar cuentas sin red).
+  - `admin_deposit_payment_account_options`: para cripto solo ofrece cuentas de la misma red del depósito (excluye ERC20/sin-red/legada). El diálogo de confirmación envía `method`+`network`.
+- **R-02 (MEDIA) — enlace exacto a depósitos garantizado**:
+  - Nuevo `GET /admin/deposits/{dep_id}` (gate `withdrawals` + alcance de moneda del empleado; 404 si no existe o queda fuera de alcance, sin revelar existencia).
+  - `AdminDeposits.jsx`: al enfocar un depósito que no está en los últimos 300 cargados, lo trae por ID y lo fija al inicio resaltado; si no existe/sin permiso muestra `adminDeposits.focusNotFound`. (Igual patrón que AdminOrders.)
+- **Pendientes de la auditoría (NO son bugs de código, requieren decisión de dueño o acción en producción)**:
+  - Vista unificada: el historial personal sigue excluyendo depósitos/retiros y las conversiones internas no entran en la consulta administrativa general (decisión de dueño iter115). No modificado.
+  - Foco exacto en OTROS módulos (retiros, fondos, lotes): el parámetro `focus` se envía para todos, pero solo depósitos y órdenes lo consumen con resaltado. Mejora opcional pendiente.
+  - Caso real `dep_ffb51c4a6ce5` (50 EUR): requiere verificación en PRODUCCIÓN (documento, usuario destinatario, evidencia de abono único, cuenta bancaria conciliada). Las herramientas ya existen (confirmar cuenta con validación de red, estado de abono, enlace por-ID). NO volver a acreditar al corregir datos descriptivos.
+  - 3 tests de regresión «403 vs 200» (acceso/export de transacciones por empleado): el acceso es por PERMISO `transactions` (no por rol); los tests asumen acceso por rol (desactualizados). Sin debilitar permisos — requiere decidir si el rol empleado estándar incluye ese permiso.
+- **Despliegue**: en PREVIEW. Requiere **volver a publicar** para producción.
+
+
+
 ## Changelog — 2 Nov 2026 (Fix login: contraseña incorrecta mostraba el aviso del captcha)
 
 Bug reportado (video): al escribir mal la contraseña aparecía «Completa la verificación 'No soy un robot'» en lugar de «Correo o contraseña incorrectos».

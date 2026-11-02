@@ -1,0 +1,23 @@
+{
+  "summary": "Frontend-only verification of R-01 and R-02 (admin cookie test_session_admin_X, after re-running seed_co_fixes_smoke.py). Everything passed. R-02: to test the fetch-by-ID path for real, Playwright route interception removed dep_seed_crypto from the /api/admin/deposits list response, which mimics a deposit older than the last 300. The row was still rendered because the frontend fetched GET /api/admin/deposits/dep_seed_crypto (seen in the network log). It was pinned as the first row, had the violet ring class (ring-[#8B5CF6]) and was inside the viewport. The focus banner showed, and 'Quitar foco' removed both the banner and the focus param. focus=nonexistent_xyz showed the focusNotFound toast and the page kept working. R-01: the options request was sent as currency=USDT&method=crypto&network=TRC20. The dep_seed_crypto dialog listed only pa_seed_usdt_trc ('Seed Wallet TRC20', TRC20): no ERC20 option and no legacy option. Confirming showed the 'Cuenta receptora confirmada' toast and the Confirmed line showed a ShieldCheck icon plus the label. In /admin/transactions the detail showed the confirmed account Seed Wallet TRC20 with VERIFICADA, a TRC20 network badge and 'verified by'. Regression: the dep_seed_legacy dialog listed pa_seed_eur (no legacy option was shown, which the spec allows); confirming worked and it shows VERIFICADA in the Transactions detail. The pending/confirmed/rejected filters rendered 5/5/178 rows. Confirm/reject buttons are present and the reject dialog opens (no deposit was rejected). The Transactions origin filter for deposits returned 5 rows. 'Ir al origen' in the Transactions modal opens /admin/withdrawals?tab=deposits&focus=dep_seed_crypto with the row and the banner.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/admin/transactions filters", "issues": ["Desde/Hasta use the browser's native date picker (mm/dd/yyyy) instead of the shadcn calendar. This was already there before this change."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AdminDeposits.jsx R-02 effect: it depends on `items`. When the focus id gets a 404, every live refresh (useLiveRefresh → load → setItems with a new array) runs the effect again, refetches, and shows the focusNotFound toast again. Suggest a ref that remembers the focusId that already failed (or was already fetched) so it is fetched only once per focusId.",
+    "AdminDeposits.jsx: focusActive is set only once, from the initial URL (useState(!!focusId)). If you navigate client-side to ?focus= while the tab is already mounted, the status filter stays in place and the pinned fetch-by-ID row covers for it. That works, but the banner, which reads focusActive, will not show in that case. Consider syncing focusActive with focusId in an effect."
+  ],
+  "updated_files": ["/app/test_reports/iteration_388.json"],
+  "success_rate": {"backend": "N/A (skipped as requested)", "frontend": "100%"},
+  "seed_data_creation": "Re-ran python /app/backend/seed_co_fixes_smoke.py. The test then confirmed dep_seed_crypto→pa_seed_usdt_trc and dep_seed_legacy→pa_seed_eur (both now verified).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "To simulate a deposit older than the last 300, intercept '**/api/admin/deposits?*' with page.route and drop the target id from items. Seed deposits are dated 3/1/2026, so they are not in the first 50 transactions; filter by origin=deposits to find them. Re-run the seed to reset the verified state."
+}
