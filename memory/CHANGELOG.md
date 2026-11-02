@@ -1,3 +1,20 @@
+## Changelog — 2 Nov 2026 (Enlace exacto en Retiros/Fondos/Lotes + red obligatoria en cuentas cripto)
+
+Dos mejoras aprobadas por el dueño, verificadas (backend por curl + frontend E2E iteration_389, 4/4 checks ejecutables PASS; badge "sin red" confirmado por screenshot con cuenta sembrada temporal).
+
+- **Enlace exacto por ID extendido a Retiros, Fondos y Lotes** (mismo patrón ya usado en Depósitos y Órdenes). Al abrir la página admin con `?focus=<id>`, la fila se resalta (anillo violeta `ring-2 ring-[#8B5CF6]`) y se desplaza a la vista; si el registro no está en la lista cargada, se trae por ID y se fija al inicio.
+  - **Backend** (nuevos GET, respetan alcance del actor; 404 si no existe/fuera de alcance):
+    - `GET /admin/withdrawals/{wid}` (`routes/admin_withdrawals.py`, gate `withdrawals`, alcance de moneda).
+    - `GET /admin/vip-batches/items/{item_id}` (`routes/vip_batches.py`, gate `orders`, alcance de par, mismo enriquecimiento vip_name/pair/reviewer que la lista).
+    - `GET /admin/company-funds/movements/{mid}` (`routes/admin_company_funds.py`, gate `company_funds`, alcance de moneda; busca en `company_withdrawals` y luego `company_fund_adjustments`, devuelve forma fusionada `{kind, ...doc}`).
+  - **Frontend**: `AdminWithdrawals.jsx` + `withdrawals/WithdrawalsTable.jsx` (fila `admin-withdrawal-row-<id>`); `vip/AdminVipBatchItems.jsx` (fila `vip-item-row-<id>`, ya existía); `company-funds/useCompanyFunds.js` (focusId + fetch-by-id + prepend, expone `focusId`), `AdminCompanyFunds.jsx` (scroll), `company-funds/CompanyWithdrawalsTable.jsx` (filas `company-withdrawal-row-<id>` y `fund-movement-row-<id>` con anillo). i18n: `admin.withdrawals.focusNotFound`, `adminVipBatches.focusNotFound`, `admin.companyFunds.focusNotFound` (ES/EN).
+  - NOTA: la ruta de Lotes VIP no se pudo ejercer con datos (0 `vip_batch_items` en DB); implementada por paridad con Depósitos/Órdenes y el 404 verificado por curl.
+- **Red obligatoria al configurar cuentas de cobro cripto** (para que ninguna cuenta quede "sin red" y bloquee la conciliación / resolutor R-01):
+  - **Backend** `routes/payment_accounts.py`: `_assert_crypto_network(payload)` → si la moneda es `type == "crypto"` y `network` viene vacío → 400 "Las cuentas de cobro cripto requieren una red (p. ej. TRC20, ERC20, BEP20)." Se aplica en POST y PUT, ANTES del step-up TOTP (falla rápido y es testeable).
+  - **Frontend** `AdminPaymentAccounts.jsx`: `save()` bloquea cripto sin red con toast; marca de requerido (`account-network-required` "· obligatorio") y pista cripto junto al campo Red cuando la moneda es cripto; badge ámbar `account-missing-network-<id>` ("sin red") en la tabla para cuentas cripto legadas sin red. i18n: `admin.paymentAccounts.networkHintCrypto|networkRequiredCrypto|networkRequiredMark|missingNetwork|missingNetworkHint` (ES/EN).
+  - Verificado curl: crear USDT sin red → 400 (mensaje cripto); con TRC20 → pasa validación y llega al gate TOTP. E2E: USDT muestra "· obligatorio", guardar sin red muestra el toast y mantiene el diálogo (sin prompt TOTP); con TRC20 aparece el prompt 2FA.
+
+
 ## Changelog — 2 Nov 2026 (Dictamen ed7091e — defectos residuales R-01 y R-02)
 
 El dictamen actualizado confirmó CO-01/02/03, identificadores y navegación. Quedaban dos defectos residuales, ahora corregidos y verificados (pytest 30/30 en `test_iter384_deposit_collection_account.py` + test directo `manual_co01_network_resolution.py` PASS + frontend E2E 100% iteration_388).

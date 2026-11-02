@@ -1,0 +1,19 @@
+{
+  "summary": "Frontend-only verification of focus-by-ID highlight on Withdrawals + Company Funds, and crypto-network-required validation on Payment Accounts. All executed checks passed. VIP batch focus skipped (no data). Missing-network badge not observable: all crypto accounts (2x USDT) already have networks (TRC20, ERC20).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "useCompanyFunds focus effect depends on moveRows; on every page/filter change, the focused movement is fetched again and pinned at the top of each page. This is probably intended, but it adds an extra request per page change and makes the page show 51 rows. Optional: cache the fetched row in a ref.",
+    "AdminWithdrawals focus effect has the same moveRows-style dependency on items. Minor: it re-fires after each items change only while the record is missing.",
+    "Missing-network badge rendering logic (cryptoCodes.has(currency) && !network) looks correct by code review and i18n keys exist in es/en ('sin red'/'no network'), but it could not be exercised with the current data."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100% of executable checks (4/4); 1 not observable due to data"},
+  "test_credentials": "session_token=test_session_admin_X cookie (admin)",
+  "seed_data_creation": "None. The TEST_crypto_nonet account was not saved (TOTP dialog cancelled/not confirmed).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Withdrawal 8641d7ca... row has class 'ring-2 ring-[#8B5CF6] ring-inset bg-[#8B5CF6]/5', at index 0, in viewport. Company movement 414211ec... renders as fund-movement-row (adjust_out, -500 CUPFX), pinned at index 0 with ring, in viewport (table shows 'Mostrando 50 de 44324'). Payment accounts: USDT selection shows account-network-required '· obligatorio'. Saving without a network shows toast 'Las cuentas de cobro cripto requieren una red (p. ej. TRC20, ERC20, BEP20).', the dialog stays open and no TOTP prompt appears. With TRC20 there is no error toast and the 'Confirmar con 2FA' prompt appears. To test the missing-network badge, insert a USDT payment_account with network null directly in the DB."
+}
