@@ -390,43 +390,51 @@ def _account_snapshot(acc: dict) -> dict:
 async def _resolve_deposit_payment_account(currency: dict, method: str,
                                            amount: float,
                                            network: Optional[str] = None) -> Optional[dict]:
-    """Cuenta de cobro para transfer/cripto: escalonada por monto (misma
-    regla que Cambiar) o, si la moneda no tiene escalones, la cuenta legada
-    de texto libre.
+    """Cuenta de cobro para transfer/cripto.
 
-    CO-01 — resolución ESTRICTA para cripto: la cuenta debe coincidir en
-    moneda + red + importe. Si no existe una cuenta compatible para la red
-    elegida se RECHAZA con 400 (nunca se recurre a una cuenta de otra red)."""
+    CO-01 / R-01 — CRIPTO: exige red EXPLÍCITA y una cuenta ESTRUCTURADA de esa
+    MISMA red (nunca otra red, nunca la cuenta legada de texto libre sin red).
+    Si falta la red o no hay cuenta compatible → 400 pidiendo configurarla.
+    TRANSFER: escalonada por monto o, si no hay escalones, la cuenta legada."""
     if method not in ("transfer", "crypto"):
         return None
     from services.payment_accounts import (get_active_accounts, pick_account,
                                            min_required)
     code = (currency.get("code") or "").upper()
     accounts = await get_active_accounts(code)
+
+    if method == "crypto":
+        # R-01 — la red es obligatoria para cripto en TODA ruta.
+        net = (network or "").strip().upper()
+        if not net:
+            raise HTTPException(
+                status_code=400,
+                detail=("Elige la red por la que enviarás el cripto para "
+                        "asignar la cuenta de cobro correcta."))
+        # Solo cuentas ESTRUCTURADAS cuya red coincide exactamente. Una cuenta
+        # sin red NO satisface una solicitud con red (evita destinos ambiguos).
+        same_net = [a for a in accounts
+                    if (a.get("network") or "").strip().upper() == net]
+        if not same_net:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"No hay una cuenta de cobro configurada para {code} en "
+                        f"la red {net}. Configura una cuenta para esa red o "
+                        "elige otra red disponible."))
+        acc = pick_account(same_net, amount)
+        if acc is None:
+            req = min_required(same_net)
+            if req is not None and amount < req:
+                detail = (f"El monto mínimo para enviar {code} por la red {net} "
+                          f"es {req:g}. Ajusta el monto para continuar.")
+            else:
+                detail = (f"No hay una cuenta de cobro disponible para ese monto "
+                          f"en {code} por la red {net}. Contacta al equipo.")
+            raise HTTPException(status_code=400, detail=detail)
+        return _account_snapshot(acc)
+
+    # TRANSFER — escalonado por importe; si no hay escalones, cuenta legada.
     if accounts:
-        if method == "crypto" and network:
-            net = network.upper()
-            same_net = [a for a in accounts
-                        if (a.get("network") or "").upper() == net]
-            if not same_net:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(f"No hay una cuenta de cobro configurada para "
-                            f"{code} en la red {net}. Elige otra red "
-                            "disponible o contacta al equipo."))
-            acc = pick_account(same_net, amount)
-            if acc is None:
-                req = min_required(same_net)
-                if req is not None and amount < req:
-                    detail = (f"El monto mínimo para enviar {code} por la red "
-                              f"{net} es {req:g}. Ajusta el monto para continuar.")
-                else:
-                    detail = (f"No hay una cuenta de cobro disponible para ese "
-                              f"monto en {code} por la red {net}. Contacta al "
-                              "equipo.")
-                raise HTTPException(status_code=400, detail=detail)
-            return _account_snapshot(acc)
-        # transfer (o cripto sin red declarada) → escalonado por importe.
         acc = pick_account(accounts, amount)
         if acc is None:
             req = min_required(accounts)
@@ -447,25 +455,36 @@ async def _resolve_deposit_payment_account(currency: dict, method: str,
 
 @router.get("/admin/deposits/payment-account-options")
 async def admin_deposit_payment_account_options(request: Request,
-                                                currency: str) -> Any:
+                                                currency: str,
+                                                method: Optional[str] = None,
+                                                network: Optional[str] = None) -> Any:
     """Cuentas de cobro activas de una moneda para asignar a un depósito
     (gate `withdrawals`, no `payment_accounts`: el personal de depósitos no
-    edita cuentas, solo indica en cuál entró el dinero)."""
+    edita cuentas, solo indica en cuál entró el dinero).
+
+    R-01 — para depósitos CRIPTO solo se ofrecen cuentas de la MISMA red del
+    depósito (nunca cuentas sin red ni la cuenta legada de texto libre)."""
     staff = await require_permission(request, "withdrawals")
     code = (currency or "").strip().upper()
     _enforce_employee_currency_scope(staff, code)
     from services.payment_accounts import get_active_accounts
     rows = await get_active_accounts(code)
+    is_crypto = (method or "").strip().lower() == "crypto"
+    net = (network or "").strip().upper()
+    if is_crypto:
+        rows = [a for a in rows
+                if net and (a.get("network") or "").strip().upper() == net]
     rows.sort(key=lambda a: float(a.get("min_amount") or 0.0))
     items = [{**_account_snapshot(a), "network": a.get("network") or "",
               "min_amount": a.get("min_amount"), "max_amount": a.get("max_amount")}
              for a in rows]
-    cur = await db.currencies.find_one({"code": code}, {"_id": 0, "payment_account": 1})
-    legacy = ((cur or {}).get("payment_account") or "").strip()
-    if legacy:
-        items.append({"id": f"legacy_{code}", "label": code,
-                      "account_details": legacy, "network": "",
-                      "min_amount": None, "max_amount": None})
+    if not is_crypto:
+        cur = await db.currencies.find_one({"code": code}, {"_id": 0, "payment_account": 1})
+        legacy = ((cur or {}).get("payment_account") or "").strip()
+        if legacy:
+            items.append({"id": f"legacy_{code}", "label": code,
+                          "account_details": legacy, "network": "",
+                          "min_amount": None, "max_amount": None})
     return {"items": items}
 
 
@@ -489,7 +508,17 @@ async def admin_set_deposit_payment_account(
         raise HTTPException(status_code=422,
                             detail="Los depósitos en efectivo no usan cuenta de cobro.")
     acc_id = payload.payment_account_id.strip()
+    is_crypto = doc.get("method") == "crypto"
+    dep_net = (doc.get("network") or "").strip().upper()
     if acc_id == f"legacy_{code}":
+        # R-01 — una cuenta legada de texto libre no tiene red: no es válida
+        # como cuenta confirmada de un depósito cripto.
+        if is_crypto:
+            raise HTTPException(
+                status_code=422,
+                detail=("Los depósitos cripto requieren una cuenta de cobro con "
+                        "red definida; la cuenta de texto libre no es válida. "
+                        f"Configura una cuenta para la red {dep_net or 'del depósito'}."))
         cur = await db.currencies.find_one({"code": code}, {"_id": 0, "payment_account": 1})
         legacy = ((cur or {}).get("payment_account") or "").strip()
         if not legacy:
@@ -501,11 +530,22 @@ async def admin_set_deposit_payment_account(
         if not acc:
             raise HTTPException(status_code=404,
                                 detail="Cuenta de cobro no encontrada para esa moneda.")
-        # CO-01 — red de la cuenta confirmada = red del depósito cripto.
-        if doc.get("method") == "crypto":
-            dep_net = (doc.get("network") or "").upper()
-            acc_net = (acc.get("network") or "").upper()
-            if dep_net and acc_net and dep_net != acc_net:
+        # R-01 — para cripto, la cuenta confirmada DEBE tener una red y coincidir
+        # exactamente con la del depósito (una cuenta sin red NO se acepta).
+        if is_crypto:
+            acc_net = (acc.get("network") or "").strip().upper()
+            if not dep_net:
+                raise HTTPException(
+                    status_code=422,
+                    detail=("El depósito no tiene red registrada; no se puede "
+                            "confirmar una cuenta cripto. Verifica la red del "
+                            "movimiento antes de conciliar."))
+            if not acc_net:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(f"La cuenta no tiene red definida. Elige una cuenta "
+                            f"de la red {dep_net}."))
+            if acc_net != dep_net:
                 raise HTTPException(
                     status_code=422,
                     detail=(f"La cuenta es de la red {acc_net} pero el depósito "
@@ -896,6 +936,23 @@ async def admin_list_deposits(request: Request, status: Optional[str] = None,
         pending_q["currency"] = {"$in": scope}
     pending = await db.deposits.count_documents(pending_q)
     return {"items": rows, "pending": pending}
+
+
+@router.get("/admin/deposits/{dep_id}")
+async def admin_get_deposit(dep_id: str, request: Request) -> Any:
+    """R-02 — trae UN depósito por ID para que Transacciones pueda abrir el
+    registro exacto aunque sea anterior a los últimos cargados. Respeta el
+    gate `withdrawals` y el alcance de monedas del empleado; 404 si no existe
+    o queda fuera del alcance (sin filtrar, no revela su existencia)."""
+    staff = await require_permission(request, "withdrawals")
+    doc = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Depósito no encontrado.")
+    scope = _deposit_currency_scope(staff)
+    if scope and (doc.get("currency") or "").upper() not in scope:
+        raise HTTPException(status_code=404, detail="Depósito no encontrado.")
+    return doc
+
 
 
 @router.get("/admin/deposits-hub/pending-count")

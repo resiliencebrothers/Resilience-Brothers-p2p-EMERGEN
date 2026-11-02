@@ -64,8 +64,21 @@ async def main():
              "$unset": {"confirmed_account_id": "", "confirmed_account_label": "",
                         "credit_pending": ""}},
             upsert=True)
+        # R-01/R-02 — confirmed CRYPTO deposit on TRC20 (not in the default
+        # "pending" list → exercises the fetch-by-id focus path; the confirm
+        # dialog must offer ONLY the TRC20 account).
+        await db.deposits.update_one(
+            {"id": "dep_seed_crypto"},
+            {"$set": {"id": "dep_seed_crypto", **base,
+                      "currency": "USDT", "amount": 50.0, "method": "crypto",
+                      "network": "TRC20", "tx_hash": "0xseedTRC20hash"},
+             "$unset": {"payment_account_id": "", "payment_account_label": "",
+                        "payment_account_details": "", "confirmed_account_id": "",
+                        "confirmed_account_label": "", "credit_pending": ""}},
+            upsert=True)
         print("Seeded: pa_seed_usdt_trc, pa_seed_usdt_erc, pa_seed_eur, "
-              "dep_seed_legacy (no account), dep_seed_expected (expected account).")
+              "dep_seed_legacy (no account), dep_seed_expected (expected account), "
+              "dep_seed_crypto (confirmed USDT TRC20).")
     finally:
         c.close()
 

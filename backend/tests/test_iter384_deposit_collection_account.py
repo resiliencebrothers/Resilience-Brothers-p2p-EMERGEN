@@ -68,6 +68,11 @@ def cleanup():
             {"id": "pa_usdt_erc", "currency_code": "USDT", "label": "Wallet ERC20",
              "account_details": "0x-addr", "network": "ERC20", "min_amount": 1,
              "max_amount": None, "is_active": True,
+             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"},
+            # R-01 — cuenta ESTRUCTURADA pero SIN red: no debe aceptarse para cripto.
+            {"id": "pa_usdt_nonet", "currency_code": "USDT", "label": "Wallet sin red",
+             "account_details": "addr-sin-red", "network": "", "min_amount": 1,
+             "max_amount": None, "is_active": True,
              "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}])
         await db.deposits.update_one(
             {"id": "dep_crypto_trc_test"},
@@ -86,7 +91,8 @@ def cleanup():
     yield
     async def _clean(db):
         await db.payment_accounts.delete_many({"id": {"$in": ["pa_test_eur_a", "pa_test_eur_b",
-                                                              "pa_usdt_trc", "pa_usdt_erc"]}})
+                                                              "pa_usdt_trc", "pa_usdt_erc",
+                                                              "pa_usdt_nonet"]}})
         if CREATED:
             await db.deposits.delete_many({"id": {"$in": CREATED}})
         await db.deposits.delete_one({"id": "dep_legacy_test02"})
@@ -317,3 +323,56 @@ class TestCreditPendingStatus:
         assert row["credit_pending"] is False
         assert row["credit_status"] == "credited"
         assert row["credited_to"] == "USDT balance"
+
+
+
+# R-01 — red desconocida/ausente NO debe aceptarse para cripto en ninguna ruta
+class TestR01NetworkStrict:
+    def test_assign_legacy_rejected_for_crypto(self):
+        # una cuenta legada (sin red) no es válida para un depósito cripto.
+        r = requests.put(f"{API}/admin/deposits/dep_crypto_trc_test/payment-account",
+                         json={"payment_account_id": "legacy_USDT"}, headers=ADMIN)
+        assert r.status_code == 422, r.text
+        assert "red" in r.json()["detail"].lower()
+
+    def test_assign_account_without_network_rejected(self):
+        # cuenta estructurada SIN red definida → rechazo para cripto.
+        r = requests.put(f"{API}/admin/deposits/dep_crypto_trc_test/payment-account",
+                         json={"payment_account_id": "pa_usdt_nonet"}, headers=ADMIN)
+        assert r.status_code == 422, r.text
+        assert "red" in r.json()["detail"].lower()
+
+    def test_assign_right_network_still_ok(self):
+        r = requests.put(f"{API}/admin/deposits/dep_crypto_trc_test/payment-account",
+                         json={"payment_account_id": "pa_usdt_trc"}, headers=ADMIN)
+        assert r.status_code == 200, r.text
+        assert r.json()["confirmed_account_network"] == "TRC20"
+
+    def test_options_crypto_filtered_by_network(self):
+        # el selector de cuentas para un depósito cripto TRC20 solo ofrece TRC20
+        # (ni ERC20, ni la cuenta sin red, ni la legada).
+        r = requests.get(f"{API}/admin/deposits/payment-account-options",
+                         params={"currency": "USDT", "method": "crypto", "network": "TRC20"},
+                         headers=ADMIN)
+        assert r.status_code == 200
+        ids = {o["id"] for o in r.json()["items"]}
+        assert "pa_usdt_trc" in ids
+        assert "pa_usdt_erc" not in ids
+        assert "pa_usdt_nonet" not in ids
+        assert not any(str(i).startswith("legacy_") for i in ids)
+
+
+# R-02 — depósito localizable por ID (enlace exacto desde Transacciones)
+class TestR02DepositById:
+    def test_get_deposit_by_id_ok(self):
+        r = requests.get(f"{API}/admin/deposits/dep_crypto_trc_test", headers=ADMIN)
+        assert r.status_code == 200, r.text
+        assert r.json()["id"] == "dep_crypto_trc_test"
+        assert "_id" not in r.json()
+
+    def test_get_deposit_by_id_404(self):
+        r = requests.get(f"{API}/admin/deposits/nope_does_not_exist", headers=ADMIN)
+        assert r.status_code == 404
+
+    def test_get_deposit_by_id_requires_auth(self):
+        assert requests.get(f"{API}/admin/deposits/dep_crypto_trc_test").status_code == 401

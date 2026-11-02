@@ -4266,6 +4266,8 @@
     "assignDialogTitle": "Deposit collection account",
     "assignDialogHint": "Select which company account received the {{amount}} {{currency}} deposit from {{client}}. It will show in Transactions.",
     "assignNoAccounts": "No collection accounts configured for {{currency}}. Create them under Collection accounts.",
+    "assignNoCryptoAccounts": "There is no collection account for {{currency}} on the {{network}} network. Configure it under Collection accounts before confirming.",
+    "focusNotFound": "That deposit wasn't found or is outside your currency scope.",
     "assignSave": "Save account",
     "assignedToast": "Collection account assigned",
     "expectedAccountShort": "Expected",

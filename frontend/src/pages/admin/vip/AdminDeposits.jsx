@@ -80,6 +80,25 @@ export default function AdminDeposits({ onChanged }) {
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(load, DEPOSIT_EVENTS);
 
+  // R-02 — el depósito buscado puede ser anterior a los 300 cargados: se trae
+  // por ID (respetando permisos y alcance de moneda) y se fija al inicio. Si
+  // no existe o queda fuera del alcance, se avisa explícitamente.
+  useEffect(() => {
+    if (!focusId || loading) return undefined;
+    if (items.some((d) => d.id === focusId)) return undefined;
+    let cancelled = false;
+    axios.get(`${API}/admin/deposits/${focusId}`, { withCredentials: true })
+      .then((r) => {
+        if (cancelled || !r.data) return;
+        setItems((prev) => (prev.some((d) => d.id === focusId) ? prev : [r.data, ...prev]));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err?.response?.status === 404) toast.error(t("adminDeposits.focusNotFound"));
+      });
+    return () => { cancelled = true; };
+  }, [focusId, loading, items, t]);
+
   // P3 — resalta y desplaza hasta el depósito buscado cuando ya cargó la lista.
   useEffect(() => {
     if (!focusId || loading) return;

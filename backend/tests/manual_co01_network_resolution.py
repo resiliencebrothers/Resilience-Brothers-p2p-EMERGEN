@@ -64,6 +64,30 @@ async def main():
         print("TRC20 below-min → rejected 400:", str(e.detail)[:70])
         ok &= e.status_code == 400
 
+    # 5) R-01 — cripto SIN red elegida → 400 (red obligatoria en toda ruta)
+    await db.payment_accounts.delete_many({"currency_code": code})
+    await db.payment_accounts.insert_one(
+        {"id": "pa_trc3", "currency_code": code, "label": "TRC20",
+         "account_details": "T", "network": "TRC20", "min_amount": 1,
+         "max_amount": None, "is_active": True})
+    try:
+        await _resolve_deposit_payment_account(currency, "crypto", 50, None)
+        print("crypto no-network → UNEXPECTED success"); ok = False
+    except HTTPException as e:
+        print("crypto no-network → rejected:", e.status_code)
+        ok &= e.status_code == 400
+
+    # 6) R-01 — cripto con moneda SOLO legada (sin cuentas estructuradas) → 400
+    #    (nunca se usa la cuenta de texto libre sin red).
+    await db.payment_accounts.delete_many({"currency_code": code})
+    legacy_cur = {"code": code, "type": "crypto", "payment_account": "legacy-wallet-text"}
+    try:
+        await _resolve_deposit_payment_account(legacy_cur, "crypto", 50, "TRC20")
+        print("crypto legacy-only → UNEXPECTED success"); ok = False
+    except HTTPException as e:
+        print("crypto legacy-only → rejected:", e.status_code)
+        ok &= e.status_code == 400
+
     await db.payment_accounts.delete_many({"currency_code": code})
     print("\nRESULT:", "PASS" if ok else "FAIL")
 

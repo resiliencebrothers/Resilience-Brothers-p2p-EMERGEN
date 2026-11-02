@@ -21,7 +21,8 @@ export function AssignDepositAccountDialog({ deposit, onClose, onDone }) {
     setPicked(deposit.confirmed_account_id || deposit.payment_account_id || "");
     setNote(deposit.confirmed_account_note || "");
     axios.get(`${API}/admin/deposits/payment-account-options`, {
-      params: { currency: deposit.currency }, withCredentials: true,
+      params: { currency: deposit.currency, method: deposit.method, network: deposit.network || "" },
+      withCredentials: true,
     })
       .then((r) => setOptions(r.data?.items || []))
       .catch(() => setOptions([]));
@@ -60,7 +61,9 @@ export function AssignDepositAccountDialog({ deposit, onClose, onDone }) {
         )}
         {options.length === 0 ? (
           <div className="text-xs text-amber-400 border border-amber-500/30 bg-amber-500/5 p-3" data-testid="assign-account-empty">
-            {t("adminDeposits.assignNoAccounts", { currency: deposit?.currency })}
+            {deposit?.method === "crypto"
+              ? t("adminDeposits.assignNoCryptoAccounts", { currency: deposit?.currency, network: deposit?.network || "—" })
+              : t("adminDeposits.assignNoAccounts", { currency: deposit?.currency })}
           </div>
         ) : (
           <div className="space-y-2 mt-1" data-testid="assign-account-options">

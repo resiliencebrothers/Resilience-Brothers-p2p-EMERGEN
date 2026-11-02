@@ -4266,6 +4266,8 @@
     "assignDialogTitle": "Cuenta de cobro del depósito",
     "assignDialogHint": "Indica a qué cuenta de la empresa llegó el depósito de {{amount}} {{currency}} de {{client}}. Se reflejará en Transacciones.",
     "assignNoAccounts": "No hay cuentas de cobro configuradas para {{currency}}. Créalas en Cuentas de cobro.",
+    "assignNoCryptoAccounts": "No hay una cuenta de cobro para {{currency}} en la red {{network}}. Configúrala en Cuentas de cobro antes de confirmar.",
+    "focusNotFound": "No se encontró ese depósito o está fuera de tu alcance de monedas.",
     "assignSave": "Guardar cuenta",
     "assignedToast": "Cuenta de cobro asignada",
     "expectedAccountShort": "Prevista",
