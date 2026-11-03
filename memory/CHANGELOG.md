@@ -1,3 +1,14 @@
+## Code Review — 2 Nov 2026 (revisión funcional de los últimos cambios)
+
+Veredicto: **READY WITH FIXES** — sin defectos High/Critical. Se verificó correcto: registro de rutas by-id (no ensombrecen literales), paridad de alcance/permisos con los endpoints de lista, sin bucles de re-fetch, `routeForTx` apunta a páginas con foco, detección cripto consistente con depósitos, validación antes del TOTP, anti-enumeración intacta en forgot-password, y paridad i18n ES/EN.
+
+Se corrigieron los 3 items LOW señalados:
+- **Toast 404 repetido en foco inválido**: añadido `focusMissedRef` en `AdminWithdrawals.jsx`, `vip/AdminVipBatchItems.jsx` y `company-funds/useCompanyFunds.js` → un enlace de foco inexistente/fuera de alcance ahora consulta y avisa UNA sola vez (antes se repetía en cada refresco en vivo). Se conserva el re-fijado de una fila válida fuera de página.
+- La guarda solo suprime el camino 404; el camino de éxito (fetch+prepend) no cambia.
+
+Pendiente (recomendación de la revisión, no bloqueante): faltan tests automatizados para los 3 endpoints by-id nuevos, los efectos de foco y el flujo set-password de Google (todo verificado por curl/E2E manual, pero sin regresión automatizada).
+
+
 ## Changelog — 2 Nov 2026 (Cuentas creadas con Google ahora pueden establecer contraseña)
 
 Bug reportado: un cliente que creó su cuenta con Google, al intentar login manual con contraseña incorrecta, solo veía "Continuar con Google" y NO tenía forma de usar "¿Olvidaste la contraseña?". (Consultado `integration_expert` por tratarse de auth.)

@@ -97,10 +97,12 @@ export default function AdminWithdrawals() {
   useLiveRefresh(load, ["withdrawal_created", "withdrawal_status_changed"], 800);
 
   // Foco por ID — el retiro enlazado desde Transacciones puede estar fuera de
-  // los cargados: se trae por ID y se fija al inicio; 404 → aviso.
+  // los cargados: se trae por ID y se fija al inicio; 404 → aviso (una vez).
+  const focusMissedRef = useRef(null);
   useEffect(() => {
     if (!focusId) return undefined;
     if (items.some((w) => w.id === focusId)) return undefined;
+    if (focusMissedRef.current === focusId) return undefined;
     let cancelled = false;
     axios.get(`${API}/admin/withdrawals/${focusId}`, { withCredentials: true })
       .then((r) => {
@@ -108,7 +110,10 @@ export default function AdminWithdrawals() {
         setItems((prev) => (prev.some((w) => w.id === focusId) ? prev : [r.data, ...prev]));
       })
       .catch((err) => {
-        if (!cancelled && err?.response?.status === 404) toast.error(t("admin.withdrawals.focusNotFound"));
+        if (!cancelled && err?.response?.status === 404) {
+          focusMissedRef.current = focusId;
+          toast.error(t("admin.withdrawals.focusNotFound"));
+        }
       });
     return () => { cancelled = true; };
   }, [focusId, items, t]);

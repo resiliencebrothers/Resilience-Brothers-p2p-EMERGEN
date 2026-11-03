@@ -10,7 +10,7 @@
  *   • iter277 — pay-in-cash support: account options (with method) and the
  *     bill breakdown that travels with the "paid" transition.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -134,9 +134,12 @@ export function useCompanyFunds() {
   // R-02 (fondos) — el movimiento buscado desde Transacciones puede estar en
   // otra página o fuera de los filtros activos: se trae por ID y se fija al
   // inicio de la tabla para que el enlace apunte al registro exacto.
+  const focusMissedRef = useRef(null);
   useEffect(() => {
     if (!focusId) return undefined;
     if (moveRows.some((r) => r.data?.id === focusId)) return undefined;
+    // Evita re-consultar/re-avisar un foco inválido en cada refresco en vivo.
+    if (focusMissedRef.current === focusId) return undefined;
     let alive = true;
     axios
       .get(`${API}/admin/company-funds/movements/${focusId}`, { withCredentials: true })
@@ -156,6 +159,7 @@ export function useCompanyFunds() {
       })
       .catch((err) => {
         if (alive && err?.response?.status === 404) {
+          focusMissedRef.current = focusId;
           toast.error(t("admin.companyFunds.focusNotFound"));
         }
       });

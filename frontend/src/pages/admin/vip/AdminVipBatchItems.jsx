@@ -91,10 +91,12 @@ export default function AdminVipBatchItems({ onChanged }) {
   useLiveRefresh(load, LIVE_EVENTS);
 
   // Foco por ID — el ítem enlazado desde Transacciones puede estar en otro
-  // estado/página: se trae por ID y se fija al inicio; 404 → aviso.
+  // estado/página: se trae por ID y se fija al inicio; 404 → aviso (una vez).
+  const focusMissedRef = useRef(null);
   useEffect(() => {
     if (!focusId || loading) return undefined;
     if (items.some((it) => it.id === focusId)) return undefined;
+    if (focusMissedRef.current === focusId) return undefined;
     let cancelled = false;
     axios.get(`${API}/admin/vip-batches/items/${focusId}`, { withCredentials: true })
       .then((r) => {
@@ -102,7 +104,10 @@ export default function AdminVipBatchItems({ onChanged }) {
         setItems((prev) => (prev.some((it) => it.id === focusId) ? prev : [r.data, ...prev]));
       })
       .catch((err) => {
-        if (!cancelled && err?.response?.status === 404) toast.error(t("adminVipBatches.focusNotFound"));
+        if (!cancelled && err?.response?.status === 404) {
+          focusMissedRef.current = focusId;
+          toast.error(t("adminVipBatches.focusNotFound"));
+        }
       });
     return () => { cancelled = true; };
   }, [focusId, loading, items, t]);
