@@ -1,7 +1,7 @@
 """Iter11 — Transactions registry (ENTRADAS + SALIDAS) for accounting.
 
 Coverage:
-- /api/admin/transactions: admin-only (403 employee, 401 anon), filters direction/currency/holder/since/until.
+- /api/admin/transactions: permission-scoped by 'transactions' (403 employee WITHOUT it, 200 WITH it, 401 anon), filters direction/currency/holder/since/until.
 - Only approved/completed orders and approved/paid withdrawals appear.
 - Pre-feature data (sender_name empty / beneficiary_name empty) is excluded.
 - Totals computed per currency: in, out, count.
@@ -11,8 +11,12 @@ Coverage:
 """
 import time
 import uuid
+import os
+from contextlib import contextmanager
+
 import pytest
 import requests
+from pymongo import MongoClient
 
 from conftest import make_vip_totp, make_admin_totp, BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, EMPLOYEE_TOKEN as EMP
 
@@ -22,6 +26,31 @@ def _h(tok=None):
     if tok:
         h["Authorization"] = f"Bearer {tok}"
     return h
+
+
+EMP_UID = "user_test_employee01"
+
+
+@contextmanager
+def _employee_with_permission(code):
+    """Concede temporalmente `code` al empleado de prueba compartido.
+
+    Modelo real (deny-by-default, STAFF-01): un empleado accede a un endpoint
+    SÓLO si el código está en `allowed_permissions`; vacío/ausente no concede
+    nada. Restaura el estado original al terminar para no afectar otros tests.
+    """
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    before = db.users.find_one({"user_id": EMP_UID}, {"_id": 0, "allowed_permissions": 1}) or {}
+    had = "allowed_permissions" in before
+    db.users.update_one({"user_id": EMP_UID}, {"$set": {"allowed_permissions": [code]}})
+    try:
+        yield
+    finally:
+        if had:
+            db.users.update_one({"user_id": EMP_UID},
+                                {"$set": {"allowed_permissions": before["allowed_permissions"]}})
+        else:
+            db.users.update_one({"user_id": EMP_UID}, {"$unset": {"allowed_permissions": ""}})
 
 
 # ---------- Validation: new required fields ----------
@@ -58,10 +87,16 @@ class TestTransactionsAccess:
     def test_unauth_401(self):
         assert requests.get(f"{BASE_URL}/api/admin/transactions").status_code == 401
 
-    def test_employee_now_allowed(self):
-        # As of iter12 employees can see admin transactions for accounting
+    def test_employee_without_permission_forbidden(self):
+        # Deny-by-default: un empleado SIN el permiso 'transactions' → 403.
         r = requests.get(f"{BASE_URL}/api/admin/transactions", headers=_h(EMP))
-        assert r.status_code == 200
+        assert r.status_code == 403, r.text
+
+    def test_employee_with_permission_allowed(self):
+        # Permission-scoped: concedido 'transactions' → 200.
+        with _employee_with_permission("transactions"):
+            r = requests.get(f"{BASE_URL}/api/admin/transactions", headers=_h(EMP))
+        assert r.status_code == 200, r.text
 
     def test_admin_ok(self):
         r = requests.get(f"{BASE_URL}/api/admin/transactions", headers=_h(ADMIN))
@@ -258,15 +293,29 @@ class TestTransactionsExports:
         assert r.content.startswith(b"%PDF-")
         assert b"%%EOF" in r.content[-50:]
 
-    def test_csv_employee_forbidden(self):
+    def test_csv_employee_forbidden_without_permission(self):
         r = requests.get(f"{BASE_URL}/api/admin/transactions/export.csv",
                          headers=_h(EMP))
-        assert r.status_code == 200  # employees now have access (iter12)
+        assert r.status_code == 403, r.text
 
-    def test_pdf_employee_forbidden(self):
+    def test_csv_employee_allowed_with_permission(self):
+        with _employee_with_permission("transactions"):
+            r = requests.get(f"{BASE_URL}/api/admin/transactions/export.csv",
+                             headers=_h(EMP))
+        assert r.status_code == 200, r.text
+        assert "text/csv" in r.headers.get("Content-Type", "")
+
+    def test_pdf_employee_forbidden_without_permission(self):
         r = requests.get(f"{BASE_URL}/api/admin/transactions/export.pdf",
                          headers=_h(EMP))
-        assert r.status_code == 200  # employees now have access (iter12)
+        assert r.status_code == 403, r.text
+
+    def test_pdf_employee_allowed_with_permission(self):
+        with _employee_with_permission("transactions"):
+            r = requests.get(f"{BASE_URL}/api/admin/transactions/export.pdf",
+                             headers=_h(EMP))
+        assert r.status_code == 200, r.text
+        assert r.content.startswith(b"%PDF-")
 
 
 # ---------- /api/me/transactions (per-user self-service) ----------

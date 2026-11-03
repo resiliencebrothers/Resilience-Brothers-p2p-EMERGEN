@@ -1,3 +1,18 @@
+## Changelog — 2 Nov 2026 (Alineados los tests de autorización de Transacciones)
+
+La revisión señaló tests de autorización de Transacciones desalineados con el modelo real de permisos. **No se tocó ningún endpoint** (siguen con `require_permission("transactions")`, deny-by-default); se corrigieron las SUPOSICIONES de los tests.
+
+- **Causa**: `test_transactions_registry.py` asumía que "los empleados tienen acceso por defecto" (afirmaba 200) y tenía tests con nombre contradictorio (`test_csv_employee_forbidden` que afirmaba 200). El empleado de prueba no tiene permisos asignados, así que el modelo real devuelve 403 → 3 tests fallaban.
+- **Modelo real** (confirmado): admin siempre pasa; un empleado accede SÓLO si `allowed_permissions` incluye `transactions` (vacío/ausente no concede nada).
+- **Cambios en `tests/test_transactions_registry.py`**: reescritos los 3 tests para cubrir AMBOS lados del modelo con un helper `_employee_with_permission(code)` (concede el permiso al empleado, ejecuta, y restaura el estado original):
+  - `test_employee_without_permission_forbidden` (403) + `test_employee_with_permission_allowed` (200) para `/admin/transactions`.
+  - `test_csv_employee_forbidden_without_permission` (403) + `test_csv_employee_allowed_with_permission` (200) para export.csv.
+  - `test_pdf_employee_forbidden_without_permission` (403) + `test_pdf_employee_allowed_with_permission` (200) para export.pdf.
+  - Docstring del módulo actualizado a "permission-scoped".
+- `test_iter55_16_permissions.py` ya modelaba correctamente el acceso por permiso (concede `kyc`, verifica que transactions → 403); sin cambios.
+- Resultado: `test_transactions_registry.py` 32 passed / 1 skipped; junto con iter55_16 e iter390 → 66 passed / 1 skipped. El usuario empleado compartido queda restaurado (sin `allowed_permissions`). `ruff` limpio.
+
+
 ## Changelog — 2 Nov 2026 (Tests de regresión backend para los últimos cambios)
 
 Cerrada la brecha de tests automatizados señalada por la revisión de código.
