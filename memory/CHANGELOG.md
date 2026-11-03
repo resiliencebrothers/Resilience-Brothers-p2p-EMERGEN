@@ -1,3 +1,16 @@
+## Changelog — 2 Nov 2026 (Tests de regresión backend para los últimos cambios)
+
+Cerrada la brecha de tests automatizados señalada por la revisión de código.
+
+- **Nuevo** `backend/tests/test_iter390_bylink_focus_and_crypto_network.py` (17 tests, todos PASS):
+  - Endpoints "buscar por ID" (alimentan el resaltado exacto desde Transacciones): `GET /admin/withdrawals/{id}`, `GET /admin/company-funds/movements/{id}` (retiro y ajuste), `GET /admin/vip-batches/items/{id}` — cada uno con 200 (registro correcto), 404 (id inexistente) y gating de permiso (cliente normal → 401/403).
+  - Red obligatoria en cuentas cripto: crear cripto sin red → 400 (antes del TOTP), con red → 200, fiat sin red → 200, y PUT quitando la red de una cripto → 400.
+  - Google set-password: forgot-password ahora emite token para cuenta sin password_hash (el fix), reset-password establece la clave, login con la nueva clave → 200, login con clave errónea → 401 INVALID_CREDENTIALS (ya no USE_GOOGLE_LOGIN), y correo inexistente → 200 (anti-enumeración).
+- **Actualizado** `test_iter151_payment_account_network.py::test_network_is_trimmed_and_empty_becomes_none`: la normalización "red en blanco ⇒ None" se verifica ahora sobre una moneda FIAT (la red en blanco en cripto ya es 400 por diseño); se conserva el trim de espacios en cripto con red válida. Añadida moneda fiat sintética `ZNF` a la fixture.
+- Suites relacionadas sin regresión: `test_iter151` (7), `test_iter384` (deposit/collection account), `test_iter280` (password set) → PASS. Lint `ruff` limpio.
+- Nota: los efectos de foco en sí son de frontend (no cubiertos por esta suite backend); verificados por el agente de pruebas E2E en iteration_389. Esta suite cubre los endpoints de los que dependen.
+
+
 ## Code Review — 2 Nov 2026 (revisión funcional de los últimos cambios)
 
 Veredicto: **READY WITH FIXES** — sin defectos High/Critical. Se verificó correcto: registro de rutas by-id (no ensombrecen literales), paridad de alcance/permisos con los endpoints de lista, sin bucles de re-fetch, `routeForTx` apunta a páginas con foco, detección cripto consistente con depósitos, validación antes del TOTP, anti-enumeración intacta en forgot-password, y paridad i18n ES/EN.

@@ -23,7 +23,8 @@ from tests.conftest import (
 
 API = f"{BASE_URL}/api"
 
-FROM_CODE = "ZNT"   # synthetic source currency used only by this suite
+FROM_CODE = "ZNT"   # synthetic source currency used only by this suite (crypto)
+FIAT_CODE = "ZNF"   # synthetic fiat currency (network optional)
 
 
 def _db():
@@ -41,9 +42,13 @@ def _seed_currency():
         "id": "test_cur_znt", "code": FROM_CODE, "name": "Network Test",
         "type": "crypto", "symbol": "₮", "is_active": True, "payment_account": "",
     }}, upsert=True)
-    db.payment_accounts.delete_many({"currency_code": FROM_CODE})
+    db.currencies.update_one({"code": FIAT_CODE}, {"$set": {
+        "id": "test_cur_znf", "code": FIAT_CODE, "name": "Network Test Fiat",
+        "type": "fiat", "symbol": "$", "is_active": True, "payment_account": "",
+    }}, upsert=True)
+    db.payment_accounts.delete_many({"currency_code": {"$in": [FROM_CODE, FIAT_CODE]}})
     yield
-    db.payment_accounts.delete_many({"currency_code": FROM_CODE})
+    db.payment_accounts.delete_many({"currency_code": {"$in": [FROM_CODE, FIAT_CODE]}})
 
 
 def _create_account(**overrides):
@@ -72,13 +77,16 @@ def test_admin_can_create_account_with_network():
 
 
 def test_network_is_trimmed_and_empty_becomes_none():
-    r = _create_account(network="   ")
-    assert r.status_code == 200
+    # iter390 — la red en blanco ⇒ None sólo aplica a FIAT; las cuentas CRIPTO
+    # ahora exigen red (ver test_iter390). Normalización de espacios en fiat:
+    r = _create_account(currency_code=FIAT_CODE, network="   ")
+    assert r.status_code == 200, r.text
     doc = r.json()
     assert doc["network"] is None
 
+    # Trim de espacios en una cuenta cripto con red válida.
     r2 = _create_account(network="  TRC20  ")
-    assert r2.status_code == 200
+    assert r2.status_code == 200, r2.text
     assert r2.json()["network"] == "TRC20"
 
 
