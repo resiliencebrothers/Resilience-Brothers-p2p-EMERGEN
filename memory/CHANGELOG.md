@@ -1,3 +1,13 @@
+## Changelog — 2 Nov 2026 (Autorización por permiso en exports de Conciliación y Fondos de empresa)
+
+Extendido el patrón "sin permiso → 403 / con permiso → 200" a toda la sección contable. **Sin cambios en endpoints** (ya estaban gateados); se añadió cobertura de regresión.
+
+- **Nuevo** `backend/tests/test_iter391_accounting_exports_authz.py` (13 tests, todos PASS), usando el helper `_employee_with_permission(code)` (concede al empleado compartido y restaura su estado):
+  - **Conciliación por cuenta** (permiso `payment_accounts`): `GET /admin/payment-accounts/reconciliation-summary/export.csv` y el JSON `/reconciliation-summary` → anon 401, admin 200, empleado sin permiso 403, empleado con permiso 200.
+  - **Fondos de empresa** (permiso `company_funds`): `GET /admin/company-funds/export.csv`, `/commissions/export.csv`, `/closing.pdf` → empleado sin permiso 403, con permiso 200 (y anon 401 / admin 200 en el CSV principal).
+- Junto con Transacciones (iter390/test_transactions_registry), la sección contable queda con autorización verificada en ambos sentidos. `ruff` limpio; usuario empleado restaurado sin permisos residuales.
+
+
 ## Changelog — 2 Nov 2026 (Alineados los tests de autorización de Transacciones)
 
 La revisión señaló tests de autorización de Transacciones desalineados con el modelo real de permisos. **No se tocó ningún endpoint** (siguen con `require_permission("transactions")`, deny-by-default); se corrigieron las SUPOSICIONES de los tests.
