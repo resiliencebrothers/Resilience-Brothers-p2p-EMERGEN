@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { toast } from "sonner";
-import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins, BarChart3, Layers, Percent, Truck } from "lucide-react";
+import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins, BarChart3, Layers, Percent, Truck, Building2 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
@@ -16,6 +16,7 @@ import { RevenueDailyTable } from "./revenue/RevenueDailyTable";
 import { RevenueMonthlyTable } from "./revenue/RevenueMonthlyTable";
 import { RevenueMarketplaceTable } from "./revenue/RevenueMarketplaceTable";
 import RevenueAnalyticsDialog from "./revenue/RevenueAnalyticsDialog";
+import CompanyStatsDialog from "./revenue/CompanyStatsDialog";
 
 const fmt = (n) => (n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -32,6 +33,21 @@ export default function AdminRevenue() {
   const [sendingTotp, setSendingTotp] = useState(null);
   const [sendingBusy, setSendingBusy] = useState(false);
   const [openAnalytics, setOpenAnalytics] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [statsNet, setStatsNet] = useState(null);
+
+  // Tarjeta de estadísticas de empresas: trae la comisión neta del mes en curso
+  // del MISMO endpoint autorizado (nunca una cifra simulada).
+  useEffect(() => {
+    const d = new Date();
+    const toIso = (x) => x.toISOString().slice(0, 10);
+    const since = toIso(new Date(d.getFullYear(), d.getMonth(), 1));
+    const until = toIso(d);
+    axios.get(`${API}/admin/company-stats/summary`,
+      { params: { since, until }, withCredentials: true })
+      .then((r) => setStatsNet(r.data?.economic?.net_commission_usdt ?? null))
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -159,6 +175,29 @@ export default function AdminRevenue() {
         </div>
       </div>
 
+      <div className="border border-[#8B5CF6]/40 bg-gradient-to-r from-[#8B5CF6]/10 to-transparent p-5 flex items-center justify-between gap-4 flex-wrap" data-testid="company-stats-card">
+        <div className="flex items-start gap-3">
+          <Building2 className="w-7 h-7 text-[#22C55E] shrink-0" />
+          <div>
+            <div className="font-display text-lg">{t("companyStats.cardTitle")}</div>
+            <p className="text-sm text-neutral-400 max-w-md">{t("companyStats.cardDesc")}</p>
+            {statsNet != null && (
+              <div className="text-xs text-neutral-500 mt-1" data-testid="company-stats-card-net">
+                {t("companyStats.cardNet")}: <span className="font-mono text-[#22C55E]">{fmt(statsNet)} USDT</span>
+                <span className="ml-1">· {t("companyStats.cardNetPeriod")}</span>
+              </div>
+            )}
+          </div>
+        </div>
+        <Button
+          data-testid="open-company-stats"
+          onClick={() => setStatsOpen(true)}
+          className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white h-11"
+        >
+          <BarChart3 className="w-4 h-4 mr-1" /> {t("companyStats.cardCta")}
+        </Button>
+      </div>
+
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <BigStat icon={Banknote} label={t("admin.revenue.totalProfit")} value={fmt(data.total_profit_usdt)} unit="USDT" highlight />
         <BigStat
@@ -268,6 +307,8 @@ export default function AdminRevenue() {
         monthly={monthly}
         days={days}
       />
+
+      <CompanyStatsDialog open={statsOpen} onOpenChange={setStatsOpen} />
 
       <TotpPromptDialog
         open={!!sendingTotp}

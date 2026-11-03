@@ -1,3 +1,28 @@
+## Changelog — 3 Nov 2026 (Estadísticas de empresas — Plan Fondo de empresa > Ingresos, FASE 0 + FASE 1)
+
+Implementado el plan "Estadísticas de empresas desde Fondo de empresa > Ingresos" (módulo de SOLO LECTURA).
+
+### FASE 0 — Mapa de datos (verificado)
+- **Comisiones de Resilience (fuente de verdad)** = `db.redemptions` (Marketplace Empresas): `fund_inflow_amount`/`fund_inflow_at`/`fund_inflow_reversed_at` (reversión), `fund_inflow_currency` (USDT; None→USDT), empresa `vendor_owner_id`/`vendor_owner_name` (puede faltar → "Sin atribuir"), `product_id`/`product_name`/`quantity`, `total_usd` (bruto), `vendor_credit_net`. Comisión ACTIVA = sin `fund_inflow_reversed_at`.
+- **Servicios** = `db.service_bookings` (status `settled`).
+- **Mensajería/municipios** = `db.deliveries` (status `delivered`; `province`/`municipality`; `fee_usdt` recaudación; `platform_share_usdt` parte propia de Resilience; `courier_share_usdt`).
+- Cobertura real de los datos actuales: 0 redemptions traen `vendor_owner_id` → casi toda la comisión cae en "Sin atribuir"; municipio sólo en 21/477 deliveries → mayoría "Municipio no registrado". Se muestran honestamente (el plan lo exige), no se infieren.
+
+### FASE 1 — Primera entrega utilizable
+- **Backend** `routes/company_stats.py` (montado en server.py), 4 endpoints GET solo-lectura, gate `company_funds`:
+  - `/admin/company-stats/summary` — indicadores económicos (comisión neta, reversiones, ingreso propio por mensajería, sin atribuir) + operativos (ventas brutas, operaciones, entregas, empresas que aportan, servicios) + **conciliación** (empresas + sin atribuir = total elegible, `balanced`) + cobertura.
+  - `/admin/company-stats/companies` — ranking por comisión neta, fila "Sin atribuir", totales, participación sobre el total filtrado (no sólo top-N), reversiones por empresa.
+  - `/admin/company-stats/products` — productos (redemptions por `product_id`) y servicios (service_bookings), orden por cantidad/ventas/comisión.
+  - `/admin/company-stats/municipalities` — entregas completadas por provincia/municipio, "Municipio no registrado", recaudación y parte propia separadas.
+  - Filtros `since`/`until` (fecha inválida → 400). Conciliación se cumple por construcción (misma fuente).
+- **Frontend**: tarjeta "Estadísticas de empresas" en la pestaña Ingresos (`AdminRevenue.jsx`, muestra comisión neta del mes del mismo endpoint, no simulada) → abre `revenue/CompanyStatsDialog.jsx`, panel a pantalla completa (desktop y móvil) con 4 pestañas (Resumen, Empresas, Productos y servicios, Mensajería), filtros de período (hoy/7d/mes/mes anterior/todo/personalizado + fechas), badge de moneda, fecha de actualización, botón volver, nota de cobertura desplegable. i18n `companyStats.*` (ES/EN, paridad OK).
+- **Tests** `tests/test_iter392_company_stats.py` (10 PASS): authz anon/admin/empleado-sin-permiso(403)/empleado-con-permiso(200), identidad de conciliación, estructura de rankings, fecha inválida 400, y **solo-lectura** (los conteos de redemptions/deliveries/adjustments/service_bookings no cambian tras consultar). `ruff` limpio; empleado de prueba restaurado.
+- Verificado por screenshots desktop (1920) y móvil (390): tarjeta, panel 4 pestañas, resumen con conciliación "CUADRA", Productos (50 filas), Empresas (fila "Sin atribuir" + total), Mensajería ("Municipio no registrado").
+
+### Pendiente (FASES 2-3 del plan, no incluidas)
+- Exportación CSV/Excel con filtros/moneda/zona horaria/corte/cobertura; comparativas y tendencias; desglose por tienda; métricas logísticas (tiempos); margen/recurrencia/disponibilidad (requieren costos/eventos verificables).
+
+
 ## Changelog — 2 Nov 2026 (Comando único de regresión de autorización contable)
 
 - **`make test-authz`** (nuevo target en `/app/Makefile`): corre de un tirón el trío de regresión de autorización contable antes de publicar — `test_transactions_registry.py` + `test_iter390_bylink_focus_and_crypto_network.py` + `test_iter391_accounting_exports_authz.py`. Verifica "sin permiso → 403 / con permiso → 200" en Transacciones, Conciliación por cuenta y Fondos de empresa. Ejecutado: **62 passed, 1 skipped (~71s)**.
