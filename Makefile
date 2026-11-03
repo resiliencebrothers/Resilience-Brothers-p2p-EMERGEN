@@ -1,4 +1,4 @@
-.PHONY: smoke test-critical test-all lint ruff test-drift install-hooks help
+.PHONY: smoke test-critical test-authz test-all lint ruff test-drift install-hooks help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -203,6 +203,16 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_service_bookings_phase2.py \
 		tests/test_booking_phase2b.py \
 		tests/test_iter98_admin_queue_sse.py \
+		tests/test_transactions_registry.py \
+		tests/test_iter390_bylink_focus_and_crypto_network.py \
+		tests/test_iter391_accounting_exports_authz.py \
+		-q --tb=line
+
+test-authz: ## Run accounting authorization regression (Transacciones + Conciliacion por cuenta + Fondos de empresa, ~2 min) -- verifies no-permission -> 403 / with-permission -> 200
+	cd backend && python -m pytest \
+		tests/test_transactions_registry.py \
+		tests/test_iter390_bylink_focus_and_crypto_network.py \
+		tests/test_iter391_accounting_exports_authz.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

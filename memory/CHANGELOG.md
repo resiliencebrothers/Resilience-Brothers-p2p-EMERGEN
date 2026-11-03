@@ -1,3 +1,10 @@
+## Changelog — 2 Nov 2026 (Comando único de regresión de autorización contable)
+
+- **`make test-authz`** (nuevo target en `/app/Makefile`): corre de un tirón el trío de regresión de autorización contable antes de publicar — `test_transactions_registry.py` + `test_iter390_bylink_focus_and_crypto_network.py` + `test_iter391_accounting_exports_authz.py`. Verifica "sin permiso → 403 / con permiso → 200" en Transacciones, Conciliación por cuenta y Fondos de empresa. Ejecutado: **62 passed, 1 skipped (~71s)**.
+- Los 3 archivos también se añadieron a `make test-critical` (red de seguridad pre-commit).
+- **Fix latente**: la copia de trabajo del Makefile tenía la indentación de recetas en ESPACIOS (make falla: "multiple target patterns"). Se restauró con TABS desde la versión commiteada y se re-aplicaron los cambios vía script (preservando tabs). `make help` lista el nuevo target y `make -n test-authz` parsea correcto.
+
+
 ## Changelog — 2 Nov 2026 (Autorización por permiso en exports de Conciliación y Fondos de empresa)
 
 Extendido el patrón "sin permiso → 403 / con permiso → 200" a toda la sección contable. **Sin cambios en endpoints** (ya estaban gateados); se añadió cobertura de regresión.
