@@ -2981,6 +2981,18 @@
     "colOwnShare": "Parte propia",
     "noDeliveries": "Sin entregas completadas en el período.",
     "messagingNote": "Una entrega completada cuenta como actividad logística aunque luego se devuelva su tarifa. La parte propia es solo la registrada para Resilience, no la tarifa total.",
+    "exportCsv": "Exportar CSV",
+    "exportError": "No se pudo generar la exportación.",
+    "vsPrev": "vs {{from}} → {{to}}",
+    "trendTitle": "Tendencia de comisión neta",
+    "bucketDay": "Por día",
+    "bucketWeek": "Por semana",
+    "bucketMonth": "Por mes",
+    "concentrationTitle": "Concentración de empresas",
+    "top5": "Top 5",
+    "top10": "Top 10",
+    "companiesWord": "Empresas",
+    "concentrationHint": "Porcentaje de la comisión neta aportado por las empresas líderes. Un valor alto indica dependencia de pocas empresas.",
     "coverageTitle": "Cobertura y definiciones de los datos"
   },
   "adminVipBatches": {

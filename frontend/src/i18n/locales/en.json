@@ -2981,6 +2981,18 @@
     "colOwnShare": "Own share",
     "noDeliveries": "No completed deliveries in the period.",
     "messagingNote": "A completed delivery counts as logistics activity even if its fee is later refunded. Own share is only what is registered for Resilience, not the full fee.",
+    "exportCsv": "Export CSV",
+    "exportError": "Could not generate the export.",
+    "vsPrev": "vs {{from}} → {{to}}",
+    "trendTitle": "Net commission trend",
+    "bucketDay": "By day",
+    "bucketWeek": "By week",
+    "bucketMonth": "By month",
+    "concentrationTitle": "Company concentration",
+    "top5": "Top 5",
+    "top10": "Top 10",
+    "companiesWord": "Companies",
+    "concentrationHint": "Share of net commission contributed by the leading companies. A high value indicates dependency on a few companies.",
     "coverageTitle": "Data coverage and definitions"
   },
   "adminVipBatches": {

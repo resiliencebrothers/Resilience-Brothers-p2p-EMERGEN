@@ -5,13 +5,16 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   Building2, Package, Truck, LayoutGrid, Loader2, AlertCircle,
-  Info, ArrowLeft, TrendingDown,
+  Info, ArrowLeft, TrendingDown, TrendingUp, Download,
 } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell,
+} from "recharts";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -53,12 +56,14 @@ export default function CompanyStatsDialog({ open, onOpenChange }) {
   const [prodKind, setProdKind] = useState("products");
   const [compSort, setCompSort] = useState("commission");
   const [prodSort, setProdSort] = useState("commission");
+  const [trendBucket, setTrendBucket] = useState("month");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState(null);
   const [companies, setCompanies] = useState(null);
   const [products, setProducts] = useState(null);
   const [municipalities, setMunicipalities] = useState(null);
+  const [trend, setTrend] = useState(null);
 
   const applyQuick = (key) => {
     setQuick(key);
@@ -77,22 +82,47 @@ export default function CompanyStatsDialog({ open, onOpenChange }) {
     if (since) params.since = since;
     if (until) params.until = until;
     try {
-      const [s, c, p, m] = await Promise.all([
+      const [s, c, p, m, tr] = await Promise.all([
         axios.get(`${API}/admin/company-stats/summary`, { params, withCredentials: true }),
         axios.get(`${API}/admin/company-stats/companies`, { params: { ...params, sort: compSort }, withCredentials: true }),
         axios.get(`${API}/admin/company-stats/products`, { params: { ...params, kind: prodKind, sort: prodSort }, withCredentials: true }),
         axios.get(`${API}/admin/company-stats/municipalities`, { params, withCredentials: true }),
+        axios.get(`${API}/admin/company-stats/trend`, { params: { ...params, bucket: trendBucket }, withCredentials: true }),
       ]);
-      setSummary(s.data); setCompanies(c.data); setProducts(p.data); setMunicipalities(m.data);
+      setSummary(s.data); setCompanies(c.data); setProducts(p.data);
+      setMunicipalities(m.data); setTrend(tr.data);
     } catch (e) {
       setError(e.response?.data?.detail || t("companyStats.error"));
       toast.error(e.response?.data?.detail || t("companyStats.error"));
     } finally {
       setLoading(false);
     }
-  }, [open, since, until, compSort, prodSort, prodKind, t]);
+  }, [open, since, until, compSort, prodSort, prodKind, trendBucket, t]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Exportación CSV (FASE 2): descarga el dataset COMPLETO del corte/filtros
+  // actuales por blob autenticado (no sólo la página visible).
+  const downloadCsv = async (path, extra = {}) => {
+    const params = { ...extra };
+    if (since) params.since = since;
+    if (until) params.until = until;
+    try {
+      const res = await axios.get(`${API}/admin/company-stats/export/${path}`, {
+        params, responseType: "blob", withCredentials: true,
+      });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      const cd = res.headers["content-disposition"] || "";
+      const match = cd.match(/filename="?([^"]+)"?/);
+      a.download = match ? match[1] : path;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error(t("companyStats.exportError"));
+    }
+  };
 
   const updatedAt = summary?.updated_at
     ? new Date(summary.updated_at).toLocaleString()
@@ -204,18 +234,26 @@ export default function CompanyStatsDialog({ open, onOpenChange }) {
             </div>
           ) : (
             <>
-              {tab === "summary" && <SummaryTab t={t} data={summary} />}
+              {tab === "summary" && (
+                <SummaryTab t={t} data={summary} trend={trend}
+                  trendBucket={trendBucket} setTrendBucket={setTrendBucket} />
+              )}
               {tab === "companies" && (
-                <CompaniesTab t={t} data={companies} sort={compSort} setSort={setCompSort} />
+                <CompaniesTab t={t} data={companies} sort={compSort} setSort={setCompSort}
+                  onExport={() => downloadCsv("companies.csv")} />
               )}
               {tab === "products" && (
                 <ProductsTab
                   t={t} data={products}
                   kind={prodKind} setKind={setProdKind}
                   sort={prodSort} setSort={setProdSort}
+                  onExport={() => downloadCsv("products.csv", { kind: prodKind })}
                 />
               )}
-              {tab === "messaging" && <MessagingTab t={t} data={municipalities} />}
+              {tab === "messaging" && (
+                <MessagingTab t={t} data={municipalities}
+                  onExport={() => downloadCsv("municipalities.csv")} />
+              )}
             </>
           )}
           {summary?.coverage && <CoverageNote t={t} coverage={summary.coverage} />}
@@ -225,7 +263,82 @@ export default function CompanyStatsDialog({ open, onOpenChange }) {
   );
 }
 
-function Stat({ label, value, unit, hint, tone, testid }) {
+function ExportButton({ t, onExport }) {
+  return (
+    <Button
+      data-testid="company-stats-export"
+      onClick={onExport}
+      variant="outline"
+      className="rounded-none border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/10 h-9"
+    >
+      <Download className="w-4 h-4 mr-1" /> {t("companyStats.exportCsv")}
+    </Button>
+  );
+}
+
+function DeltaBadge({ t, comparison }) {
+  if (!comparison) return null;
+  const up = comparison.delta_usdt >= 0;
+  const pct = comparison.delta_pct;
+  return (
+    <div className="text-xs mt-1 flex items-center gap-1" data-testid="company-stats-delta">
+      {up ? <TrendingUp className="w-3 h-3 text-[#22C55E]" /> : <TrendingDown className="w-3 h-3 text-red-400" />}
+      <span className={up ? "text-[#22C55E]" : "text-red-400"}>
+        {up ? "+" : ""}{fmt(comparison.delta_usdt)}{pct == null ? "" : ` (${up ? "+" : ""}${fmt(pct)}%)`}
+      </span>
+      <span className="text-neutral-600">
+        · {t("companyStats.vsPrev", { from: comparison.previous_since, to: comparison.previous_until })}
+      </span>
+    </div>
+  );
+}
+
+function TrendChart({ t, trend, bucket, setBucket }) {
+  const rows = trend?.rows || [];
+  return (
+    <section data-testid="company-stats-trend">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <h3 className="micro-label text-[#8B5CF6]">{t("companyStats.trendTitle")}</h3>
+        <Select value={bucket} onValueChange={setBucket}>
+          <SelectTrigger data-testid="company-stats-trend-bucket" className="rounded-none bg-[#0c0c0c] border-white/10 h-8 w-36 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="bg-[#0c0c0c] border-white/10 rounded-none">
+            <SelectItem value="day">{t("companyStats.bucketDay")}</SelectItem>
+            <SelectItem value="week">{t("companyStats.bucketWeek")}</SelectItem>
+            <SelectItem value="month">{t("companyStats.bucketMonth")}</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {rows.length === 0 ? (
+        <div className="border border-white/10 bg-[#0c0c0c] p-6 text-center text-sm text-neutral-500">
+          {t("companyStats.noRows")}
+        </div>
+      ) : (
+        <div className="border border-white/10 bg-[#0c0c0c] p-3" style={{ height: 240 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: "#888", fontSize: 11 }} stroke="#ffffff20" />
+              <YAxis tick={{ fill: "#888", fontSize: 11 }} stroke="#ffffff20" width={54} />
+              <Tooltip
+                contentStyle={{ background: "#0c0c0c", border: "1px solid #ffffff20", borderRadius: 0, fontSize: 12 }}
+                formatter={(v) => [`${fmt(v)} USDT`, t("companyStats.netCommission")]}
+              />
+              <Bar dataKey="commission_usdt" radius={[2, 2, 0, 0]}>
+                {rows.map((r, i) => (
+                  <Cell key={i} fill={r.commission_usdt < 0 ? "#EF4444" : "#8B5CF6"} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Stat({ label, value, unit, hint, tone, testid, children }) {
   const color = tone === "neg" ? "text-red-400" : tone === "pos" ? "text-[#22C55E]" : "text-white";
   return (
     <div className="border border-white/10 bg-[#0c0c0c] p-4" data-testid={testid}>
@@ -234,24 +347,31 @@ function Stat({ label, value, unit, hint, tone, testid }) {
         {value}{unit ? <span className="text-sm text-neutral-500 ml-1">{unit}</span> : null}
       </div>
       {hint ? <div className="text-xs text-neutral-500 mt-1">{hint}</div> : null}
+      {children}
     </div>
   );
 }
 
-function SummaryTab({ t, data }) {
+function SummaryTab({ t, data, trend, trendBucket, setTrendBucket }) {
   if (!data) return <Empty t={t} />;
   const e = data.economic, o = data.operational, rec = data.reconciliation;
+  const comp = data.comparison, conc = data.concentration;
   return (
     <div className="space-y-6" data-testid="company-stats-summary">
       <section>
         <h3 className="micro-label text-[#8B5CF6] mb-3">{t("companyStats.economicGroup")}</h3>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <Stat label={t("companyStats.netCommission")} value={fmt(e.net_commission_usdt)} unit="USDT" tone={e.net_commission_usdt < 0 ? "neg" : "pos"} testid="stat-net-commission" />
+          <Stat label={t("companyStats.netCommission")} value={fmt(e.net_commission_usdt)} unit="USDT" tone={e.net_commission_usdt < 0 ? "neg" : "pos"} testid="stat-net-commission">
+            <DeltaBadge t={t} comparison={comp} />
+          </Stat>
           <Stat label={t("companyStats.reversedCommission")} value={fmt(e.reversed_commission_usdt)} unit="USDT" hint={t("companyStats.reversedCount", { n: e.reversed_count })} tone="neg" testid="stat-reversed" />
           <Stat label={t("companyStats.messagingOwn")} value={fmt(e.messaging_own_income_usdt)} unit="USDT" hint={t("companyStats.messagingOwnHint")} testid="stat-messaging-own" />
           <Stat label={t("companyStats.unattributed")} value={fmt(e.unattributed_commission_usdt)} unit="USDT" hint={t("companyStats.unattributedHint")} testid="stat-unattributed" />
         </div>
       </section>
+
+      <TrendChart t={t} trend={trend} bucket={trendBucket} setBucket={setTrendBucket} />
+
       <section>
         <h3 className="micro-label text-[#8B5CF6] mb-3">{t("companyStats.operationalGroup")}</h3>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -261,6 +381,19 @@ function SummaryTab({ t, data }) {
           <Stat label={t("companyStats.companiesContributing")} value={fmt(o.companies_contributing)} hint={t("companyStats.servicesCount", { n: o.services_completed })} testid="stat-companies" />
         </div>
       </section>
+
+      {conc && (
+        <section className="border border-white/10 bg-[#0c0c0c] p-4" data-testid="company-stats-concentration">
+          <h3 className="micro-label text-[#8B5CF6] mb-2">{t("companyStats.concentrationTitle")}</h3>
+          <div className="flex flex-wrap gap-6 text-sm">
+            <div><span className="text-neutral-500">{t("companyStats.top5")}: </span><span className="font-mono text-white">{fmt(conc.top5_share_pct)}%</span></div>
+            <div><span className="text-neutral-500">{t("companyStats.top10")}: </span><span className="font-mono text-white">{fmt(conc.top10_share_pct)}%</span></div>
+            <div><span className="text-neutral-500">{t("companyStats.companiesWord")}: </span><span className="font-mono text-white">{conc.companies_count}</span></div>
+          </div>
+          <p className="text-xs text-neutral-500 mt-2">{t("companyStats.concentrationHint")}</p>
+        </section>
+      )}
+
       {rec && (
         <section className="border border-white/10 bg-[#0c0c0c] p-4" data-testid="company-stats-reconciliation">
           <h3 className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-2">
@@ -294,7 +427,7 @@ function Td({ children, right, mono, tone }) {
   return <td className={`px-3 py-2 text-sm ${right ? "text-right" : ""} ${mono ? "font-mono" : ""} ${color}`}>{children}</td>;
 }
 
-function CompaniesTab({ t, data, sort, setSort }) {
+function CompaniesTab({ t, data, sort, setSort, onExport }) {
   if (!data) return <Empty t={t} />;
   const rows = data.rows || [];
   const u = data.unattributed;
@@ -302,7 +435,9 @@ function CompaniesTab({ t, data, sort, setSort }) {
     <div className="space-y-3" data-testid="company-stats-companies">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="text-xs text-neutral-500">{t("companyStats.showingN", { shown: data.shown, total: data.total_companies })}</div>
-        <Select value={sort} onValueChange={setSort}>
+        <div className="flex items-center gap-2">
+          <ExportButton t={t} onExport={onExport} />
+          <Select value={sort} onValueChange={setSort}>
           <SelectTrigger data-testid="company-stats-companies-sort" className="rounded-none bg-[#0c0c0c] border-white/10 h-9 w-48 text-sm">
             <SelectValue />
           </SelectTrigger>
@@ -312,6 +447,7 @@ function CompaniesTab({ t, data, sort, setSort }) {
             <SelectItem value="orders">{t("companyStats.sortOrders")}</SelectItem>
           </SelectContent>
         </Select>
+        </div>
       </div>
       <div className="overflow-x-auto border border-white/10">
         <table className="w-full min-w-[720px]">
@@ -369,7 +505,7 @@ function CompaniesTab({ t, data, sort, setSort }) {
   );
 }
 
-function ProductsTab({ t, data, kind, setKind, sort, setSort }) {
+function ProductsTab({ t, data, kind, setKind, sort, setSort, onExport }) {
   return (
     <div className="space-y-3" data-testid="company-stats-products">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -385,16 +521,19 @@ function ProductsTab({ t, data, kind, setKind, sort, setSort }) {
             className={`px-3 py-1.5 text-sm ${kind === "services" ? "bg-[#8B5CF6]/20 text-violet-200" : "text-white/50 hover:text-white"}`}
           >{t("companyStats.kindServices")}</button>
         </div>
-        <Select value={sort} onValueChange={setSort}>
-          <SelectTrigger data-testid="company-stats-products-sort" className="rounded-none bg-[#0c0c0c] border-white/10 h-9 w-52 text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-[#0c0c0c] border-white/10 rounded-none">
-            <SelectItem value="quantity">{t("companyStats.sortQuantity")}</SelectItem>
-            <SelectItem value="gross">{t("companyStats.sortGross")}</SelectItem>
-            <SelectItem value="commission">{t("companyStats.sortCommission")}</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <ExportButton t={t} onExport={onExport} />
+          <Select value={sort} onValueChange={setSort}>
+            <SelectTrigger data-testid="company-stats-products-sort" className="rounded-none bg-[#0c0c0c] border-white/10 h-9 w-52 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#0c0c0c] border-white/10 rounded-none">
+              <SelectItem value="quantity">{t("companyStats.sortQuantity")}</SelectItem>
+              <SelectItem value="gross">{t("companyStats.sortGross")}</SelectItem>
+              <SelectItem value="commission">{t("companyStats.sortCommission")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
       {!data ? <Empty t={t} /> : (
         <div className="overflow-x-auto border border-white/10">
@@ -436,12 +575,15 @@ function ProductsTab({ t, data, kind, setKind, sort, setSort }) {
   );
 }
 
-function MessagingTab({ t, data }) {
+function MessagingTab({ t, data, onExport }) {
   if (!data) return <Empty t={t} />;
   const rows = data.rows || [];
   return (
     <div className="space-y-3" data-testid="company-stats-messaging">
-      <div className="text-xs text-neutral-500">{t("companyStats.totalDeliveries", { n: data.total_completed })}</div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="text-xs text-neutral-500">{t("companyStats.totalDeliveries", { n: data.total_completed })}</div>
+        <ExportButton t={t} onExport={onExport} />
+      </div>
       <div className="overflow-x-auto border border-white/10">
         <table className="w-full min-w-[720px]">
           <thead className="bg-white/5">

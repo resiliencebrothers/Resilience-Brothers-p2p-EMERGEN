@@ -1,3 +1,35 @@
+## Changelog — 5 Nov 2026 (Estadísticas de empresas — FASE 2: análisis y exportación)
+
+Segunda fase del plan "Estadísticas de empresas (Fondo de empresa > Ingresos)". Módulo sigue siendo de SOLO LECTURA. Backend en `routes/company_stats.py`, frontend en `revenue/CompanyStatsDialog.jsx`.
+
+### Backend
+- **Tendencia** nuevo `GET /admin/company-stats/trend?since&until&bucket=day|week|month&company_id` — evolución de la comisión neta por bucket (usa `$dateTrunc` sobre `fund_inflow_at`, semana empieza lunes), con comisión activa, revertida y nº de operaciones por bucket; ordenado ascendente. Gate `company_funds`.
+- **Comparativa período-sobre-período** en `/summary`: cuando hay `since`+`until`, se calcula el intervalo anterior comparable (misma duración, termina el día antes del inicio actual) y se devuelve `comparison` {previous_since, previous_until, previous_net_commission_usdt, delta_usdt, delta_pct}. Sin fechas → `comparison: null`.
+- **Concentración** en `/summary`: `concentration` {top5_share_pct, top10_share_pct, companies_count} = % de la comisión neta aportado por las empresas líderes. Es `null` cuando no hay comisión atribuida a empresas (p. ej. todo "Sin atribuir"), para no mostrar un dato engañoso.
+- **Exportación CSV** (dataset COMPLETO del corte/filtros, no sólo la página visible):
+  - `GET /admin/company-stats/export/companies.csv`
+  - `GET /admin/company-stats/export/products.csv?kind=products|services`
+  - `GET /admin/company-stats/export/municipalities.csv`
+  - Cada archivo lleva bloque de metadatos (corte UTC, moneda USDT, filtros Desde/Hasta, notas de cobertura/definiciones) + cabecera + filas; BOM UTF-8 para que Excel abra con acentos correctos. Gate `company_funds`, anónimo → 401. Reutilizan las MISMAS agregaciones que las tablas (`_products_rows`, `_municipalities_rows`, `_companies_agg`) para que tabla y export coincidan (EST-11).
+- Refactor sin cambio de contrato: la lógica de productos/municipios se extrajo a helpers reutilizados por JSON y CSV.
+
+### Frontend
+- **Resumen**: badge de variación (▲/▼ con % y rango comparado) sobre "Comisión comercial neta"; **gráfico de tendencia** (recharts, barras violeta/rojo para valores negativos) con selector Por día/semana/mes; bloque de **Concentración** (top-5/top-10) que sólo aparece cuando hay empresas atribuidas.
+- **Empresas / Productos y servicios / Mensajería**: botón **"Exportar CSV"** (descarga por blob autenticado con `withCredentials`, respeta el corte y filtros actuales).
+- i18n `companyStats.*` ampliado (ES/EN, paridad OK): exportCsv, exportError, vsPrev, trendTitle, bucket*, concentration*, top5/top10.
+
+### Alcance y decisiones honestas (plan)
+- **Desglose por tienda: NO construido.** Las redemptions no tienen dimensión "tienda" fiable (sólo empresa/vendor). Por el principio del plan "no inventar", se omite en vez de mostrar datos no atribuibles. Queda para FASE 3 si se añade vinculación tienda→venta.
+- **Métricas logísticas de tiempos** (solicitudes creadas, tiempos de entrega/fallos) quedan para FASE 3: requieren marcas de tiempo/definiciones que hoy no están garantizadas.
+- "Excel" se cubre con CSV + BOM UTF-8 (Excel lo abre nativamente); no se añadió generador .xlsx binario.
+
+### Pruebas
+- Nuevo `tests/test_iter393_company_stats_fase2.py` (**13 PASS**): trend authz/anon-401/empleado-403/buckets/orden; la suma de la tendencia == comisión neta del summary; comparativa presente con fechas y ausente sin fechas; clave concentration presente; exports anon-401/empleado-sin-permiso-403/con-permiso-200; metadatos CSV (corte/moneda/filtros/cobertura) + fila TOTAL; `kind=services`; exports SOLO LECTURA (no mutan conteos).
+- Regresión FASE 1 `tests/test_iter392_company_stats.py` **10/10** tras el refactor. `ruff` limpio. Empleado de prueba restaurado (allowed_permissions sin fuga). Verificación de navegador (desktop 1920 + móvil 390): badge de comparativa, gráfico de tendencia, pestañas y botones "Exportar CSV" renderizan; diálogo a pantalla completa sin overflow horizontal propio.
+
+---
+
+
 ## Changelog — 3 Nov 2026 (Estadísticas de empresas — Plan Fondo de empresa > Ingresos, FASE 0 + FASE 1)
 
 Implementado el plan "Estadísticas de empresas desde Fondo de empresa > Ingresos" (módulo de SOLO LECTURA).

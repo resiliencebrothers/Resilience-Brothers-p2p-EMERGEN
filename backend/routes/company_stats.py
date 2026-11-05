@@ -171,6 +171,148 @@ async def _services_summary(since, until) -> dict:
     return {"completed": int(g.get("completed") or 0), "amount_usdt": _round(g.get("amount"), 2)}
 
 
+async def _products_rows(since, until, kind, company_id=None) -> list:
+    """Filas de productos/servicios (sin orden ni límite) — reutilizado por el
+    endpoint JSON y la exportación CSV para que coincidan (EST-11)."""
+    if kind == "products":
+        match = _commission_match(since, until, company_id)
+        pipeline = [
+            {"$match": match},
+            {"$group": {
+                "_id": "$product_id",
+                "product": {"$first": "$product_name"},
+                "company": {"$first": "$vendor_owner_name"},
+                "company_id": {"$first": "$vendor_owner_id"},
+                "quantity": {"$sum": {"$cond": [_ACTIVE, {"$ifNull": ["$quantity", 0]}, 0]}},
+                "gross_usdt": {"$sum": {"$cond": [_ACTIVE, {"$ifNull": ["$total_usd", 0]}, 0]}},
+                "commission_usdt": {"$sum": {"$cond": [_ACTIVE, {"$ifNull": ["$fund_inflow_amount", 0]}, 0]}},
+                "orders": {"$sum": {"$cond": [_ACTIVE, 1, 0]}},
+            }},
+        ]
+        rows = await db.redemptions.aggregate(pipeline).to_list(5000)
+        return [{
+            "id": r["_id"] or "—",
+            "name": r.get("product") or "—",
+            "company": r.get("company") or "Sin atribuir",
+            "company_id": r.get("company_id") or "",
+            "quantity": _round(r["quantity"], 2),
+            "gross_usdt": _round(r["gross_usdt"], 2),
+            "commission_usdt": _round(r["commission_usdt"], 2),
+            "orders": int(r["orders"] or 0),
+        } for r in rows]
+    match = {"status": {"$in": _SERVICE_DONE}, "updated_at": _range("updated_at", since, until)}
+    if company_id and str(company_id).strip():
+        match["company_id"] = str(company_id).strip()
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": "$service_id",
+            "name": {"$first": "$service_title"},
+            "company": {"$first": "$company_name"},
+            "company_id": {"$first": "$company_id"},
+            "quantity": {"$sum": {"$ifNull": ["$quantity", 1]}},
+            "gross_usdt": {"$sum": {"$ifNull": ["$amount_usdt", 0]}},
+            "orders": {"$sum": 1},
+        }},
+    ]
+    rows = await db.service_bookings.aggregate(pipeline).to_list(5000)
+    return [{
+        "id": r["_id"] or "—",
+        "name": r.get("name") or "—",
+        "company": r.get("company") or "—",
+        "company_id": r.get("company_id") or "",
+        "quantity": _round(r["quantity"], 2),
+        "gross_usdt": _round(r["gross_usdt"], 2),
+        "commission_usdt": None,
+        "orders": int(r["orders"] or 0),
+    } for r in rows]
+
+
+async def _municipalities_rows(since, until) -> tuple[list, int]:
+    match = {"status": _DELIVERED, "updated_at": _range("updated_at", since, until)}
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": {
+                "province": {"$ifNull": ["$province", ""]},
+                "municipality": {"$ifNull": ["$municipality", ""]},
+            },
+            "completed": {"$sum": 1},
+            "fee_usdt": {"$sum": {"$ifNull": ["$fee_usdt", 0]}},
+            "platform_share_usdt": {"$sum": {"$ifNull": ["$platform_share_usdt", 0]}},
+            "courier_share_usdt": {"$sum": {"$ifNull": ["$courier_share_usdt", 0]}},
+        }},
+    ]
+    rows = await db.deliveries.aggregate(pipeline).to_list(5000)
+    total = sum(int(r["completed"] or 0) for r in rows)
+    out = []
+    for r in rows:
+        prov = (r["_id"].get("province") or "").strip()
+        muni = (r["_id"].get("municipality") or "").strip()
+        completed = int(r["completed"] or 0)
+        out.append({
+            "province": prov or "—",
+            "municipality": muni or "Municipio no registrado",
+            "registered": bool(muni),
+            "completed": completed,
+            "fee_usdt": _round(r["fee_usdt"], 2),
+            "platform_share_usdt": _round(r["platform_share_usdt"], 2),
+            "courier_share_usdt": _round(r["courier_share_usdt"], 2),
+            "share_pct": (_round(completed / total * 100, 2) if total > 0 else None),
+        })
+    out.sort(key=lambda x: x["completed"], reverse=True)
+    return out, total
+
+
+def _previous_range(since, until) -> Optional[dict]:
+    """Intervalo anterior de duración comparable (termina el día antes de `since`).
+    Sólo si hay fechas explícitas (plan §2: comparar contra duración comparable)."""
+    from datetime import timedelta
+    s, u = (since or "").strip(), (until or "").strip()
+    if not s or not u:
+        return None
+    try:
+        sd = datetime.fromisoformat(s[:10]).date()
+        ud = datetime.fromisoformat(u[:10]).date()
+    except ValueError:
+        return None
+    span = (ud - sd).days
+    if span < 0:
+        return None
+    prev_until = sd - timedelta(days=1)
+    prev_since = prev_until - timedelta(days=span)
+    return {"since": prev_since.isoformat(), "until": prev_until.isoformat()}
+
+
+async def _comparison_block(since, until, current_net: float) -> Optional[dict]:
+    prev = _previous_range(since, until)
+    if not prev:
+        return None
+    rows = await _companies_agg(prev["since"], prev["until"])
+    _, _, ptot = _split_rows(rows)
+    prev_net = _round(ptot["commission"], 2)
+    delta = _round(current_net - prev_net, 2)
+    return {
+        "previous_since": prev["since"], "previous_until": prev["until"],
+        "previous_net_commission_usdt": prev_net,
+        "delta_usdt": delta,
+        "delta_pct": (_round(delta / prev_net * 100, 2) if prev_net > 0 else None),
+    }
+
+
+def _concentration_block(companies: list, total: float) -> Optional[dict]:
+    """Concentración del aporte en las 5/10 principales empresas (plan §7).
+    Sólo interpretable con total neto positivo."""
+    if total <= 0 or not companies:
+        return None
+    comms = sorted((_round(c["commission"]) for c in companies), reverse=True)
+    return {
+        "top5_share_pct": _round(sum(comms[:5]) / total * 100, 2),
+        "top10_share_pct": _round(sum(comms[:10]) / total * 100, 2),
+        "companies_count": len(companies),
+    }
+
+
 def _coverage() -> dict:
     return {
         "currency": COMMISSION_CCY,
@@ -201,6 +343,8 @@ async def company_stats_summary(
 
     companies_contributing = sum(1 for r in companies if _round(r["commission"]) > 0)
     companies_sum = sum(_round(r["commission"]) for r in companies)
+    comparison = await _comparison_block(since, until, _round(totals["commission"], 2))
+    concentration = _concentration_block(companies, _round(totals["commission"], 2))
 
     return {
         "currency": COMMISSION_CCY,
@@ -236,6 +380,9 @@ async def company_stats_summary(
             "total_eligible_commission_usdt": _round(totals["commission"], 2),
             "balanced": abs((companies_sum + unatt["commission"]) - totals["commission"]) < 1e-6,
         },
+        # FASE 2 — comparativa con período anterior comparable y concentración
+        "comparison": comparison,
+        "concentration": concentration,
         "coverage": _coverage(),
     }
 
@@ -310,64 +457,11 @@ async def company_stats_products(
     await require_permission(request, PERM)
     limit = max(1, min(int(limit), 500))
     kind = "services" if str(kind).lower() == "services" else "products"
-
+    out = await _products_rows(since, until, kind, company_id)
     if kind == "products":
-        match = _commission_match(since, until, company_id)
-        pipeline = [
-            {"$match": match},
-            {"$group": {
-                "_id": "$product_id",
-                "product": {"$first": "$product_name"},
-                "company": {"$first": "$vendor_owner_name"},
-                "company_id": {"$first": "$vendor_owner_id"},
-                "quantity": {"$sum": {"$cond": [_ACTIVE, {"$ifNull": ["$quantity", 0]}, 0]}},
-                "gross_usdt": {"$sum": {"$cond": [_ACTIVE, {"$ifNull": ["$total_usd", 0]}, 0]}},
-                "commission_usdt": {"$sum": {"$cond": [_ACTIVE, {"$ifNull": ["$fund_inflow_amount", 0]}, 0]}},
-                "orders": {"$sum": {"$cond": [_ACTIVE, 1, 0]}},
-            }},
-        ]
-        rows = await db.redemptions.aggregate(pipeline).to_list(5000)
-        out = [{
-            "id": r["_id"] or "—",
-            "name": r.get("product") or "—",
-            "company": r.get("company") or "Sin atribuir",
-            "company_id": r.get("company_id") or "",
-            "quantity": _round(r["quantity"], 2),
-            "gross_usdt": _round(r["gross_usdt"], 2),
-            "commission_usdt": _round(r["commission_usdt"], 2),
-            "orders": int(r["orders"] or 0),
-        } for r in rows]
         sort_field = {"quantity": "quantity", "gross": "gross_usdt",
                       "commission": "commission_usdt"}.get(sort, "commission_usdt")
     else:
-        match = {"status": {"$in": _SERVICE_DONE}, "updated_at": _range("updated_at", since, until)}
-        if company_id and str(company_id).strip():
-            match["company_id"] = str(company_id).strip()
-        pipeline = [
-            {"$match": match},
-            {"$group": {
-                "_id": "$service_id",
-                "name": {"$first": "$service_title"},
-                "company": {"$first": "$company_name"},
-                "company_id": {"$first": "$company_id"},
-                "quantity": {"$sum": {"$ifNull": ["$quantity", 1]}},
-                "gross_usdt": {"$sum": {"$ifNull": ["$amount_usdt", 0]}},
-                "orders": {"$sum": 1},
-            }},
-        ]
-        rows = await db.service_bookings.aggregate(pipeline).to_list(5000)
-        out = [{
-            "id": r["_id"] or "—",
-            "name": r.get("name") or "—",
-            "company": r.get("company") or "—",
-            "company_id": r.get("company_id") or "",
-            "quantity": _round(r["quantity"], 2),
-            "gross_usdt": _round(r["gross_usdt"], 2),
-            # Para servicios no hay una comisión de fondo registrada por reserva:
-            # se muestra el importe, no se inventa comisión.
-            "commission_usdt": None,
-            "orders": int(r["orders"] or 0),
-        } for r in rows]
         sort_field = {"quantity": "quantity", "gross": "gross_usdt",
                       "commission": "gross_usdt"}.get(sort, "gross_usdt")
 
@@ -393,39 +487,7 @@ async def company_stats_municipalities(
 ) -> Any:
     await require_permission(request, PERM)
     limit = max(1, min(int(limit), 500))
-    match = {"status": _DELIVERED, "updated_at": _range("updated_at", since, until)}
-    pipeline = [
-        {"$match": match},
-        {"$group": {
-            "_id": {
-                "province": {"$ifNull": ["$province", ""]},
-                "municipality": {"$ifNull": ["$municipality", ""]},
-            },
-            "completed": {"$sum": 1},
-            "fee_usdt": {"$sum": {"$ifNull": ["$fee_usdt", 0]}},
-            "platform_share_usdt": {"$sum": {"$ifNull": ["$platform_share_usdt", 0]}},
-            "courier_share_usdt": {"$sum": {"$ifNull": ["$courier_share_usdt", 0]}},
-        }},
-    ]
-    rows = await db.deliveries.aggregate(pipeline).to_list(5000)
-    total_completed = sum(int(r["completed"] or 0) for r in rows)
-
-    out = []
-    for r in rows:
-        prov = (r["_id"].get("province") or "").strip()
-        muni = (r["_id"].get("municipality") or "").strip()
-        completed = int(r["completed"] or 0)
-        out.append({
-            "province": prov or "—",
-            "municipality": muni or "Municipio no registrado",
-            "registered": bool(muni),
-            "completed": completed,
-            "fee_usdt": _round(r["fee_usdt"], 2),
-            "platform_share_usdt": _round(r["platform_share_usdt"], 2),
-            "courier_share_usdt": _round(r["courier_share_usdt"], 2),
-            "share_pct": (_round(completed / total_completed * 100, 2) if total_completed > 0 else None),
-        })
-    out.sort(key=lambda x: x["completed"], reverse=True)
+    out, total_completed = await _municipalities_rows(since, until)
 
     return {
         "currency": COMMISSION_CCY,
@@ -436,3 +498,155 @@ async def company_stats_municipalities(
         "total_completed": total_completed,
         "coverage": _coverage(),
     }
+
+
+# ---------------------------------------------------------------------------
+# 5) TENDENCIA (evolución de comisiones por día/semana/mes) — FASE 2
+# ---------------------------------------------------------------------------
+@router.get("/admin/company-stats/trend")
+async def company_stats_trend(
+    request: Request, since: Optional[str] = None, until: Optional[str] = None,
+    bucket: str = "month", company_id: Optional[str] = None,
+) -> Any:
+    await require_permission(request, PERM)
+    unit = {"day": "day", "week": "week", "month": "month"}.get(str(bucket).lower(), "month")
+    match = _commission_match(since, until, company_id)
+    pipeline = [
+        {"$match": match},
+        {"$addFields": {"_d": {"$toDate": "$fund_inflow_at"}}},
+        {"$addFields": {"_bin": {"$dateTrunc": {"date": "$_d", "unit": unit, "startOfWeek": "mon"}}}},
+        {"$group": {
+            "_id": "$_bin",
+            "commission": {"$sum": {"$cond": [_ACTIVE, {"$ifNull": ["$fund_inflow_amount", 0]}, 0]}},
+            "reversed": {"$sum": {"$cond": [_ACTIVE, 0, {"$ifNull": ["$fund_inflow_amount", 0]}]}},
+            "orders": {"$sum": {"$cond": [_ACTIVE, 1, 0]}},
+        }},
+        {"$sort": {"_id": 1}},
+        {"$project": {
+            "_id": 0,
+            "label": {"$dateToString": {"date": "$_id", "format": "%Y-%m-%d"}},
+            "commission_usdt": "$commission", "reversed_usdt": "$reversed", "orders": "$orders",
+        }},
+    ]
+    rows = await db.redemptions.aggregate(pipeline).to_list(2000)
+    for r in rows:
+        r["commission_usdt"] = _round(r["commission_usdt"], 2)
+        r["reversed_usdt"] = _round(r["reversed_usdt"], 2)
+        r["orders"] = int(r["orders"] or 0)
+    return {
+        "currency": COMMISSION_CCY, "bucket": unit,
+        "updated_at": now_utc().isoformat(),
+        "filters": {"since": since, "until": until, "company_id": company_id},
+        "rows": rows, "coverage": _coverage(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# EXPORTACIÓN CSV (FASE 2) — dataset COMPLETO (no sólo la página visible),
+# con cabecera de metadatos (corte, moneda, filtros, cobertura). Misma
+# autorización que las vistas (EST-13) y de solo lectura (EST-14).
+# ---------------------------------------------------------------------------
+def _csv_response(title: str, since, until, header: list, data_rows: list, filename: str):
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    buf = io.StringIO()
+    w = csv.writer(buf, quoting=csv.QUOTE_ALL)
+    w.writerow([f"Resilience - Estadisticas de empresas - {title}"])
+    w.writerow(["Generado (corte UTC)", now_utc().isoformat()])
+    w.writerow(["Moneda", COMMISSION_CCY])
+    w.writerow(["Desde", since or "Todo", "Hasta", until or "Todo"])
+    for n in _coverage()["notes"]:
+        w.writerow(["Cobertura", n])
+    w.writerow([])
+    w.writerow(header)
+    for row in data_rows:
+        w.writerow(row)
+    # BOM utf-8-sig para que Excel reconozca acentos.
+    payload = buf.getvalue().encode("utf-8-sig")
+    return StreamingResponse(
+        io.BytesIO(payload), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _ts_name() -> str:
+    return now_utc().strftime("%Y%m%d_%H%M%S")
+
+
+@router.get("/admin/company-stats/export/companies.csv")
+async def export_companies_csv(
+    request: Request, since: Optional[str] = None, until: Optional[str] = None,
+) -> Any:
+    await require_permission(request, PERM)
+    rows = await _companies_agg(since, until)
+    companies, unatt, totals = _split_rows(rows)
+    total_comm = totals["commission"]
+    companies.sort(key=lambda r: _round(r["commission"]), reverse=True)
+
+    header = ["Empresa", "ID empresa", "Comision neta (USDT)", "Ventas brutas (USDT)",
+              "Neto empresa (USDT)", "Operaciones", "Reversiones (USDT)",
+              "Mov. revertidos", "Participacion %"]
+    data = []
+    for r in companies:
+        comm = _round(r["commission"], 2)
+        data.append([
+            r.get("company") or "—", r["_id"], comm, _round(r["gross"], 2),
+            _round(r["net_vendor"], 2), int(r["orders"] or 0),
+            _round(r["reversed_commission"], 2), int(r["reversed_orders"] or 0),
+            (_round(comm / total_comm * 100, 2) if total_comm > 0 else ""),
+        ])
+    if unatt["commission"] != 0 or unatt["orders"] != 0:
+        data.append(["Sin atribuir", "", unatt["commission"], unatt["gross"], "",
+                     unatt["orders"], unatt["reversed_commission"], "",
+                     (_round(unatt["commission"] / total_comm * 100, 2) if total_comm > 0 else "")])
+    data.append(["TOTAL", "", _round(totals["commission"], 2), _round(totals["gross"], 2),
+                 "", totals["orders"], _round(totals["reversed_commission"], 2),
+                 totals["reversed_orders"], "100" if total_comm > 0 else ""])
+    return _csv_response("Empresas", since, until, header, data,
+                         f"empresas_{_ts_name()}.csv")
+
+
+@router.get("/admin/company-stats/export/products.csv")
+async def export_products_csv(
+    request: Request, since: Optional[str] = None, until: Optional[str] = None,
+    kind: str = "products",
+) -> Any:
+    await require_permission(request, PERM)
+    kind = "services" if str(kind).lower() == "services" else "products"
+    rows = await _products_rows(since, until, kind)
+    sort_field = "commission_usdt" if kind == "products" else "gross_usdt"
+    rows.sort(key=lambda x: x.get(sort_field) or 0, reverse=True)
+
+    label = "Servicio" if kind == "services" else "Producto"
+    header = [label, "ID", "Empresa", "Cantidad", "Ventas brutas (USDT)",
+              "Comision neta (USDT)", "Operaciones"]
+    data = [[
+        r["name"], r["id"], r["company"], r["quantity"], r["gross_usdt"],
+        ("sin desglose" if r["commission_usdt"] is None else r["commission_usdt"]),
+        r["orders"],
+    ] for r in rows]
+    title = "Servicios" if kind == "services" else "Productos"
+    return _csv_response(title, since, until, header, data,
+                         f"{kind}_{_ts_name()}.csv")
+
+
+@router.get("/admin/company-stats/export/municipalities.csv")
+async def export_municipalities_csv(
+    request: Request, since: Optional[str] = None, until: Optional[str] = None,
+) -> Any:
+    await require_permission(request, PERM)
+    rows, total = await _municipalities_rows(since, until)
+    header = ["Provincia", "Municipio", "Municipio registrado", "Entregas completadas",
+              "Participacion %", "Recaudacion (USDT)", "Parte propia (USDT)",
+              "Pago mensajero (USDT)"]
+    data = [[
+        r["province"], r["municipality"], "si" if r["registered"] else "no",
+        r["completed"], (r["share_pct"] if r["share_pct"] is not None else ""),
+        r["fee_usdt"], r["platform_share_usdt"], r["courier_share_usdt"],
+    ] for r in rows]
+    data.append(["TOTAL", "", "", total, "100" if total > 0 else "", "", "", ""])
+    return _csv_response("Mensajeria por municipio", since, until, header, data,
+                         f"municipios_{_ts_name()}.csv")
+
