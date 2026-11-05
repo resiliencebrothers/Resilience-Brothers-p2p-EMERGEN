@@ -142,8 +142,10 @@ def test_export_csv_headers_and_metadata():
     text = r.content.decode("utf-8-sig")
     rows = list(csv.reader(io.StringIO(text)))
     flat = "\n".join(",".join(c for c in row) for row in rows)
-    # Metadatos obligatorios del plan: corte, moneda, filtros y cobertura.
-    assert "Generado (corte UTC)" in flat
+    # Metadatos obligatorios del plan: hora de generación, zona de negocio,
+    # moneda, filtros y cobertura (EST-R04/R10: es hora de generación, no un corte).
+    assert "hora de generacion UTC" in flat
+    assert "Zona horaria de negocio" in flat
     assert "USDT" in flat
     assert "2026-10-01" in flat and "2026-10-31" in flat
     assert "Cobertura" in flat

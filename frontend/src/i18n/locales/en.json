@@ -2954,12 +2954,12 @@
     "deliveriesCompleted": "Deliveries completed",
     "companiesContributing": "Contributing companies",
     "servicesCount": "{{n}} services completed",
-    "reconciliationTitle": "Commission reconciliation",
-    "companiesWord": "companies",
+    "reconciliationTitle": "Distribution check",
+    "companiesWord": "Companies",
     "unattributedWord": "unattributed",
     "balanced": "Balanced",
     "notBalanced": "Not balanced",
-    "reconciliationHint": "The sum of per-company commissions plus unattributed equals the period's total eligible commissions. It does not imply it matches all fund income.",
+    "reconciliationHint": "The per-company breakdown plus the unattributed row must reconstruct the eligible total computed independently (ungrouped). This is a DISTRIBUTION check, not accounting proof against all fund income.",
     "showingN": "Showing {{shown}} of {{total}} companies",
     "sortCommission": "Sort by net commission",
     "sortGross": "Sort by gross sales",
@@ -3000,9 +3000,9 @@
     "concentrationTitle": "Company concentration",
     "top5": "Top 5",
     "top10": "Top 10",
-    "companiesWord": "Companies",
     "concentrationHint": "Share of net commission contributed by the leading companies. A high value indicates dependency on a few companies.",
-    "coverageTitle": "Data coverage and definitions"
+    "coverageTitle": "Data coverage and definitions",
+    "colUnit": "Unit"
   },
   "adminVipBatches": {
     "eyebrow": "ORDERS",

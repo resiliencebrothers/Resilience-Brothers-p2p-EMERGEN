@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useTranslation } from "react-i18next";
@@ -18,24 +18,32 @@ import {
 
 const fmt = (n) => (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-// Rango rápido → {since, until} en fecha local YYYY-MM-DD.
+// Día de negocio (America/Havana) en formato YYYY-MM-DD, independiente de la
+// zona del dispositivo (EST-R07). El backend interpreta estas fechas como días
+// de esa misma zona.
+const BIZ_TZ = "America/Havana";
+const bizYMD = (d) => new Intl.DateTimeFormat("en-CA", {
+  timeZone: BIZ_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+}).format(d);
+
+// Rango rápido → {since, until} en día de negocio YYYY-MM-DD.
 function computeRange(key) {
-  const d = new Date();
-  const iso = (x) => x.toISOString().slice(0, 10);
-  const today = iso(d);
+  const now = new Date();
+  const today = bizYMD(now);
+  const [y, m] = today.split("-").map(Number);
+  const ymd = (yy, mm, dd) =>
+    `${String(yy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
   if (key === "today") return { since: today, until: today };
   if (key === "7d") {
-    const s = new Date(d); s.setDate(s.getDate() - 6);
-    return { since: iso(s), until: today };
+    const s = new Date(now); s.setDate(s.getDate() - 6);
+    return { since: bizYMD(s), until: today };
   }
-  if (key === "month") {
-    const s = new Date(d.getFullYear(), d.getMonth(), 1);
-    return { since: iso(s), until: today };
-  }
+  if (key === "month") return { since: ymd(y, m, 1), until: today };
   if (key === "prevMonth") {
-    const s = new Date(d.getFullYear(), d.getMonth() - 1, 1);
-    const e = new Date(d.getFullYear(), d.getMonth(), 0);
-    return { since: iso(s), until: iso(e) };
+    const pm = m === 1 ? 12 : m - 1;
+    const py = m === 1 ? y - 1 : y;
+    const lastDay = new Date(py, pm, 0).getDate(); // último día del mes anterior
+    return { since: ymd(py, pm, 1), until: ymd(py, pm, lastDay) };
   }
   return { since: "", until: "" }; // custom / all
 }
@@ -64,6 +72,9 @@ export default function CompanyStatsDialog({ open, onOpenChange }) {
   const [products, setProducts] = useState(null);
   const [municipalities, setMunicipalities] = useState(null);
   const [trend, setTrend] = useState(null);
+  // EST-R06 — secuencia para descartar respuestas obsoletas: si cambia el
+  // período mientras una carga está en vuelo, sólo se aplica la última.
+  const loadSeqRef = useRef(0);
 
   const applyQuick = (key) => {
     setQuick(key);
@@ -77,6 +88,7 @@ export default function CompanyStatsDialog({ open, onOpenChange }) {
 
   const load = useCallback(async () => {
     if (!open) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true); setError("");
     const params = {};
     if (since) params.since = since;
@@ -89,13 +101,15 @@ export default function CompanyStatsDialog({ open, onOpenChange }) {
         axios.get(`${API}/admin/company-stats/municipalities`, { params, withCredentials: true }),
         axios.get(`${API}/admin/company-stats/trend`, { params: { ...params, bucket: trendBucket }, withCredentials: true }),
       ]);
+      if (seq !== loadSeqRef.current) return; // respuesta obsoleta: descartar
       setSummary(s.data); setCompanies(c.data); setProducts(p.data);
       setMunicipalities(m.data); setTrend(tr.data);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(e.response?.data?.detail || t("companyStats.error"));
       toast.error(e.response?.data?.detail || t("companyStats.error"));
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [open, since, until, compSort, prodSort, prodKind, trendBucket, t]);
 
@@ -477,14 +491,14 @@ function CompaniesTab({ t, data, sort, setSort, onExport }) {
                 <Td right mono>{r.share_pct == null ? "—" : `${fmt(r.share_pct)}%`}</Td>
               </tr>
             ))}
-            {/* Fila "Sin atribuir" (comisiones válidas sin empresa) */}
-            {u && (u.commission_usdt !== 0 || u.orders !== 0) && (
+            {/* Fila "Sin atribuir": incluye el caso de SÓLO reversiones (EST-R08) */}
+            {u && (u.commission_usdt !== 0 || u.orders !== 0 || u.reversed_commission_usdt !== 0 || u.reversed_orders !== 0) && (
               <tr className="border-t border-[#8B5CF6]/30 bg-[#8B5CF6]/5" data-testid="company-row-unattributed">
                 <Td><span className="text-[#A78BFA]">{t("companyStats.unattributedRow")}</span></Td>
                 <Td right mono tone={u.commission_usdt < 0 ? "neg" : undefined}>{fmt(u.commission_usdt)}</Td>
                 <Td right mono>{fmt(u.gross_usdt)}</Td>
                 <Td right mono>{u.orders}</Td>
-                <Td right mono>{u.reversed_commission_usdt > 0 ? `-${fmt(u.reversed_commission_usdt)}` : "—"}</Td>
+                <Td right mono tone={u.reversed_commission_usdt > 0 ? "neg" : undefined}>{u.reversed_commission_usdt > 0 ? `-${fmt(u.reversed_commission_usdt)} (${u.reversed_orders || 0})` : "—"}</Td>
                 <Td right mono>{u.share_pct == null ? "—" : `${fmt(u.share_pct)}%`}</Td>
               </tr>
             )}
@@ -496,7 +510,7 @@ function CompaniesTab({ t, data, sort, setSort, onExport }) {
               <Td right mono>{fmt(data.totals.gross_usdt)}</Td>
               <Td right>—</Td>
               <Td right mono>{data.totals.reversed_commission_usdt > 0 ? `-${fmt(data.totals.reversed_commission_usdt)}` : "—"}</Td>
-              <Td right>100%</Td>
+              <Td right>{data.totals.commission_usdt > 0 ? "100%" : "—"}</Td>
             </tr>
           </tfoot>
         </table>
@@ -523,14 +537,16 @@ function ProductsTab({ t, data, kind, setKind, sort, setSort, onExport }) {
         </div>
         <div className="flex items-center gap-2">
           <ExportButton t={t} onExport={onExport} />
-          <Select value={sort} onValueChange={setSort}>
+          <Select value={kind === "services" && sort === "commission" ? "gross" : sort} onValueChange={setSort}>
             <SelectTrigger data-testid="company-stats-products-sort" className="rounded-none bg-[#0c0c0c] border-white/10 h-9 w-52 text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-[#0c0c0c] border-white/10 rounded-none">
               <SelectItem value="quantity">{t("companyStats.sortQuantity")}</SelectItem>
               <SelectItem value="gross">{t("companyStats.sortGross")}</SelectItem>
-              <SelectItem value="commission">{t("companyStats.sortCommission")}</SelectItem>
+              {kind !== "services" && (
+                <SelectItem value="commission">{t("companyStats.sortCommission")}</SelectItem>
+              )}
             </SelectContent>
           </Select>
         </div>
@@ -543,6 +559,7 @@ function ProductsTab({ t, data, kind, setKind, sort, setSort, onExport }) {
                 <Th>{t(kind === "services" ? "companyStats.colService" : "companyStats.colProduct")}</Th>
                 <Th>{t("companyStats.colCompany")}</Th>
                 <Th right>{t("companyStats.colQuantity")}</Th>
+                <Th>{t("companyStats.colUnit")}</Th>
                 <Th right>{t("companyStats.colGross")}</Th>
                 <Th right>{t("companyStats.colCommission")}</Th>
                 <Th right>{t("companyStats.colOrders")}</Th>
@@ -550,13 +567,14 @@ function ProductsTab({ t, data, kind, setKind, sort, setSort, onExport }) {
             </thead>
             <tbody>
               {(data.rows || []).length === 0 && (
-                <tr><td colSpan={6} className="px-3 py-6 text-center text-neutral-500 text-sm">{t("companyStats.noRows")}</td></tr>
+                <tr><td colSpan={7} className="px-3 py-6 text-center text-neutral-500 text-sm">{t("companyStats.noRows")}</td></tr>
               )}
               {(data.rows || []).map((r) => (
                 <tr key={r.id} className="border-t border-white/5" data-testid={`product-row-${r.id}`}>
                   <Td>{r.name}</Td>
                   <Td>{r.company === "Sin atribuir" ? <span className="text-[#A78BFA]">{t("companyStats.unattributedRow")}</span> : r.company}</Td>
                   <Td right mono>{fmt(r.quantity)}</Td>
+                  <Td>{r.unit || "—"}</Td>
                   <Td right mono>{fmt(r.gross_usdt)}</Td>
                   <Td right mono tone="pos">{r.commission_usdt == null ? t("companyStats.noBreakdown") : fmt(r.commission_usdt)}</Td>
                   <Td right mono>{r.orders}</Td>

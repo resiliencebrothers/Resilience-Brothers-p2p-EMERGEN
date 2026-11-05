@@ -2954,12 +2954,12 @@
     "deliveriesCompleted": "Entregas completadas",
     "companiesContributing": "Empresas que aportan",
     "servicesCount": "{{n}} servicios completados",
-    "reconciliationTitle": "Conciliación de comisiones",
-    "companiesWord": "empresas",
+    "reconciliationTitle": "Comprobación de distribución",
+    "companiesWord": "Empresas",
     "unattributedWord": "sin atribuir",
     "balanced": "Cuadra",
     "notBalanced": "No cuadra",
-    "reconciliationHint": "La suma de comisiones por empresa más las sin atribuir equivale al total de comisiones elegibles del período. No implica que coincida con todos los ingresos del fondo.",
+    "reconciliationHint": "El desglose por empresa más la fila sin atribuir debe reconstruir el total elegible calculado de forma independiente (sin agrupar). Es una comprobación de DISTRIBUCIÓN, no una evidencia de cuadre contable con todos los ingresos del fondo.",
     "showingN": "Mostrando {{shown}} de {{total}} empresas",
     "sortCommission": "Ordenar por comisión neta",
     "sortGross": "Ordenar por ventas brutas",
@@ -3000,9 +3000,9 @@
     "concentrationTitle": "Concentración de empresas",
     "top5": "Top 5",
     "top10": "Top 10",
-    "companiesWord": "Empresas",
     "concentrationHint": "Porcentaje de la comisión neta aportado por las empresas líderes. Un valor alto indica dependencia de pocas empresas.",
-    "coverageTitle": "Cobertura y definiciones de los datos"
+    "coverageTitle": "Cobertura y definiciones de los datos",
+    "colUnit": "Unidad"
   },
   "adminVipBatches": {
     "eyebrow": "ÓRDENES",
