@@ -20,6 +20,10 @@ from db_client import db
 # the client history render a dedicated badge/tab.
 SMALL_BALANCE_THRESHOLD_USDT = 5.0
 
+# Tope por fuente al leer conversiones. Con orden estable (created_at desc) y
+# filtro de moneda en BD, conserva las conversiones MÁS RECIENTES ya relevantes.
+_CONVERSION_FETCH_CAP = 5000
+
 
 # Public alias — every entry in the unified transactions list shares this shape.
 TransactionItem = Dict[str, Any]
@@ -382,7 +386,14 @@ async def _fetch_conversions(
     si es None (registro ADMIN) incorpora las conversiones de TODOS los
     clientes. `holder` filtra por nombre/correo del cliente (solo admin).
     SOLO LECTURA: las conversiones nunca suman a in/out ni generan un segundo
-    crédito (ver compute_transaction_totals)."""
+    crédito (ver compute_transaction_totals).
+
+    Historiales grandes: la moneda se filtra EN LA BASE DE DATOS y cada fuente
+    se lee ORDENADA por fecha descendente antes del límite, de modo que el tope
+    por fuente conserva las conversiones MÁS RECIENTES ya filtradas por moneda
+    (antes se leían 5.000 sin orden y se filtraba la moneda en memoria, lo que
+    podía descartar conversiones recientes o de la moneda buscada)."""
+    cu = currency.upper() if currency else None
     durable_q: dict = {"status": "applied", **date_q}
     audit_q: dict = {
         "action": {"$in": ["vip.convert", "vip.convert.dust"]},
@@ -391,26 +402,32 @@ async def _fetch_conversions(
     if user_id:
         durable_q["user_id"] = user_id
         audit_q["actor_id"] = user_id
+    # Condiciones combinables con $and (holder y/o moneda pueden coincidir en
+    # un mismo $or, por eso no se asignan sueltas al dict).
+    durable_and: List[dict] = []
+    audit_and: List[dict] = []
     if holder:
         rx = {"$regex": re.escape(holder), "$options": "i"}
-        durable_q["$or"] = [{"user_name": rx}, {"user_email": rx}]
-        audit_q["$or"] = [{"actor_name": rx}, {"actor_email": rx}]
+        durable_and.append({"$or": [{"user_name": rx}, {"user_email": rx}]})
+        audit_and.append({"$or": [{"actor_name": rx}, {"actor_email": rx}]})
+    if cu:
+        durable_and.append({"$or": [{"from_code": cu}, {"to_code": cu}]})
+        audit_and.append({"$or": [{"details.from_code": cu}, {"details.to_code": cu}]})
+    if durable_and:
+        durable_q["$and"] = durable_and
+    if audit_and:
+        audit_q["$and"] = audit_and
     durable = await db.conversions.find(
-        durable_q, {"_id": 0}).to_list(5000)
+        durable_q, {"_id": 0}).sort("created_at", -1).to_list(_CONVERSION_FETCH_CAP)
     durable_ids = {c.get("id") for c in durable}
     items = [_durable_conversion_to_transaction(c) for c in durable]
-    rows = await db.audit_log.find(audit_q, {"_id": 0}).to_list(5000)
+    rows = await db.audit_log.find(
+        audit_q, {"_id": 0}).sort("created_at", -1).to_list(_CONVERSION_FETCH_CAP)
     for r in rows:
         cid = (r.get("details") or {}).get("conversion_id")
         if cid and cid in durable_ids:
             continue  # ya representada por el registro durable
         items.append(_conversion_to_transaction(r))
-    if currency:
-        cu = currency.upper()
-        items = [
-            it for it in items
-            if it.get("from_code") == cu or it.get("to_code") == cu
-        ]
     return items
 
 

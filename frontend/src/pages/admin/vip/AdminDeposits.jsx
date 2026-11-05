@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -37,10 +37,14 @@ export default function AdminDeposits({ onChanged }) {
   const [assigning, setAssigning] = useState(null);
   const abortRef = useRef(null);
   const initialLoadRef = useRef(true);
-  // #2 — id ya consultado por ID (en curso, resuelto o 404) para NO repetir el
-  // fetch ni el aviso cuando cambian `items`/`loading`. #3 — rastrea el focus
-  // previo para resincronizar focusActive cuando cambia el enlace.
-  const focusLookupRef = useRef(null);
+  // #2 (rev 6d53890) — el depósito traído por ID vive en estado PROPIO, separado
+  // de la lista paginada, para que un refresco de `items` no lo pierda. El fetch
+  // por ID se rastrea por estado para distinguir: en curso / encontrado / 404 /
+  // error transitorio, sin bloquear reintentos legítimos. `prevFocusRef`
+  // resincroniza focusActive cuando cambia el enlace.
+  const [focusDeposit, setFocusDeposit] = useState(null);
+  const focusStateRef = useRef({ id: null, state: null });
+  const focusAbortRef = useRef(null);
   const prevFocusRef = useRef(focusId);
 
   useEffect(() => {
@@ -56,7 +60,14 @@ export default function AdminDeposits({ onChanged }) {
     if (focusId !== prevFocusRef.current) {
       prevFocusRef.current = focusId;
       setFocusActive(!!focusId);
-      focusLookupRef.current = null; // nuevo id → permite buscarlo por ID
+      // nuevo id → se descarta el estado y el depósito previo y se cancela
+      // cualquier búsqueda por ID en vuelo (ya no interesa su respuesta).
+      focusStateRef.current = { id: null, state: null };
+      setFocusDeposit(null);
+      if (focusAbortRef.current) {
+        try { focusAbortRef.current.abort(); } catch (_) { /* ignore */ }
+        focusAbortRef.current = null;
+      }
     }
   }, [focusId]);
 
@@ -97,46 +108,79 @@ export default function AdminDeposits({ onChanged }) {
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(load, DEPOSIT_EVENTS);
 
+  // Tras una acción del personal (confirmar/rechazar/asignar) el estado del
+  // depósito enfocado pudo cambiar: se libera su estado de búsqueda por ID para
+  // refrescarlo, sin vaciar la fila mostrada entretanto.
+  const reloadAll = useCallback(() => {
+    focusStateRef.current = { id: null, state: null };
+    load();
+  }, [load]);
+
   // R-02 — el depósito buscado puede ser anterior a los 300 cargados: se trae
-  // por ID (respetando permisos y alcance de moneda) y se fija al inicio. Si
-  // no existe o queda fuera del alcance, se avisa explícitamente.
+  // por ID (respetando permisos y alcance de moneda) y se guarda en estado
+  // PROPIO (`focusDeposit`). Se funde con la lista al renderizar, de modo que un
+  // refresco de `items` no lo elimine. Estados: en curso (no repetir), encontrado
+  // (no repetir), 404 (aviso único, no repetir), transitorio (reintenta). La
+  // petición NO se cancela por refrescos de la lista (solo por cambio de id).
   useEffect(() => {
-    if (!focusId || loading) return undefined;
-    if (items.some((d) => d.id === focusId)) return undefined;
-    // #2 — ya se intentó por ID para este focus (en curso, resuelto o 404): no
-    // repetir la consulta ni el aviso aunque `items`/`loading` vuelvan a cambiar.
-    if (focusLookupRef.current === focusId) return undefined;
-    focusLookupRef.current = focusId;
-    let cancelled = false;
-    axios.get(`${API}/admin/deposits/${focusId}`, { withCredentials: true })
+    if (!focusId || loading) return;
+    if (items.some((d) => d.id === focusId)) return; // ya está en la lista
+    const st = focusStateRef.current;
+    if (st.id === focusId && (st.state === "pending" || st.state === "found" || st.state === "notfound")) {
+      return; // en curso o ya resuelto para ESTE id
+    }
+    focusStateRef.current = { id: focusId, state: "pending" };
+    const controller = new AbortController();
+    focusAbortRef.current = controller;
+    axios.get(`${API}/admin/deposits/${focusId}`, { withCredentials: true, signal: controller.signal })
       .then((r) => {
-        if (cancelled || !r.data) return;
-        setItems((prev) => (prev.some((d) => d.id === focusId) ? prev : [r.data, ...prev]));
+        if (focusStateRef.current.id !== focusId) return; // cambió el id
+        if (r.data) {
+          focusStateRef.current = { id: focusId, state: "found" };
+          setFocusDeposit(r.data);
+        }
       })
       .catch((err) => {
-        if (cancelled) return;
+        // Cancelada por cambio de id: el nuevo id gestiona su propio estado.
+        if (axios.isCancel(err) || err?.code === "ERR_CANCELED") return;
+        if (focusStateRef.current.id !== focusId) return;
         if (err?.response?.status === 404) {
-          // No encontrado / fuera de alcance: se avisa UNA vez. El reintento
-          // solo ocurre si cambia el id del enlace (focusLookupRef se limpia).
+          // No encontrado / fuera de alcance: aviso UNA vez, sin reintentos.
+          focusStateRef.current = { id: focusId, state: "notfound" };
           toast.error(t("adminDeposits.focusNotFound"));
         } else {
-          // Error transitorio (red/servidor): permite reintentar en el próximo ciclo.
-          focusLookupRef.current = null;
+          // Error transitorio (red/servidor): se libera el estado para reintentar.
+          focusStateRef.current = { id: null, state: null };
         }
+      })
+      .finally(() => {
+        if (focusAbortRef.current === controller) focusAbortRef.current = null;
       });
-    return () => { cancelled = true; };
   }, [focusId, loading, items, t]);
+
+  // Fila a renderizar: fusiona el depósito enfocado (estado propio) con la lista
+  // paginada mientras siga seleccionado y no aparezca ya en `items`.
+  const rows = useMemo(() => {
+    if (focusId && focusDeposit && focusDeposit.id === focusId
+        && !items.some((d) => d.id === focusId)) {
+      return [focusDeposit, ...items];
+    }
+    return items;
+  }, [items, focusDeposit, focusId]);
 
   // P3 — resalta y desplaza hasta el depósito buscado cuando ya cargó la lista.
   useEffect(() => {
     if (!focusId || loading) return;
     const el = document.querySelector(`[data-testid="admin-deposit-row-${focusId}"]`);
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [focusId, loading, items]);
+  }, [focusId, loading, rows]);
 
   useEffect(() => () => {
     if (abortRef.current) {
       try { abortRef.current.abort(); } catch (_) { /* ignore */ }
+    }
+    if (focusAbortRef.current) {
+      try { focusAbortRef.current.abort(); } catch (_) { /* ignore */ }
     }
   }, []);
 
@@ -145,7 +189,7 @@ export default function AdminDeposits({ onChanged }) {
       const body = movementId ? { evidence_movement_id: movementId } : {};
       await axios.post(`${API}/admin/deposits/${id}/confirm`, body, { withCredentials: true });
       toast.success(t("adminDeposits.confirmedToast"));
-      load();
+      reloadAll();
     } catch (err) {
       const det = err?.response?.data?.detail;
       if (det?.code === "EVIDENCE_ALREADY_USED") {
@@ -246,12 +290,12 @@ export default function AdminDeposits({ onChanged }) {
             {loading && (
               <tr><td colSpan="7" className="text-center text-neutral-500 py-8">{t("admin.common.loadingEllipsis")}</td></tr>
             )}
-            {!loading && items.length === 0 && (
+            {!loading && rows.length === 0 && (
               <tr><td colSpan="7" className="text-center text-neutral-500 py-8" data-testid="admin-deposits-empty">
                 {t("adminDeposits.empty")}
               </td></tr>
             )}
-            {!loading && items.map((d) => (
+            {!loading && rows.map((d) => (
               <tr key={d.id} className={`border-b border-white/5${d.id === focusId ? " ring-2 ring-[#8B5CF6] ring-inset bg-[#8B5CF6]/5" : ""}`} data-testid={`admin-deposit-row-${d.id}`}>
                 <td className="px-4 py-3">
                   <div className="text-white text-xs">{d.user_name || "—"}</div>
@@ -387,12 +431,12 @@ export default function AdminDeposits({ onChanged }) {
       <RejectDepositDialog
         deposit={rejecting}
         onClose={() => setRejecting(null)}
-        onDone={() => { setRejecting(null); load(); }}
+        onDone={() => { setRejecting(null); reloadAll(); }}
       />
       <AssignDepositAccountDialog
         deposit={assigning}
         onClose={() => setAssigning(null)}
-        onDone={() => { setAssigning(null); load(); }}
+        onDone={() => { setAssigning(null); reloadAll(); }}
       />
     </div>
   );

@@ -146,7 +146,7 @@ export default function CompanyStatsDialog({ open, onOpenChange }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="company-stats-dialog"
-        className="max-w-[97vw] w-[97vw] h-[94vh] p-0 gap-0 bg-[#0a0a0a] border-white/10 rounded-none flex flex-col"
+        className="max-w-[97vw] w-[97vw] h-[94vh] max-h-[94vh] p-0 gap-0 bg-[#0a0a0a] border-white/10 rounded-none flex flex-col"
       >
         {/* Header */}
         <div className="shrink-0 border-b border-white/10 p-4 sm:p-5 space-y-4">
