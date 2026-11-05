@@ -168,7 +168,7 @@ export default function CompanyStatsDialog({ open, onOpenChange }) {
                 </h2>
               </div>
             </div>
-            <div className="text-right text-xs text-neutral-500">
+            <div className="text-right text-xs text-neutral-500 pr-8">
               <div><span className="text-[#A78BFA] font-mono">{summary?.currency || "USDT"}</span> · {t("companyStats.updatedAt")}</div>
               <div className="font-mono" data-testid="company-stats-updated">{updatedAt}</div>
             </div>
@@ -378,7 +378,7 @@ function SummaryTab({ t, data, trend, trendBucket, setTrendBucket }) {
           <Stat label={t("companyStats.netCommission")} value={fmt(e.net_commission_usdt)} unit="USDT" tone={e.net_commission_usdt < 0 ? "neg" : "pos"} testid="stat-net-commission">
             <DeltaBadge t={t} comparison={comp} />
           </Stat>
-          <Stat label={t("companyStats.reversedCommission")} value={fmt(e.reversed_commission_usdt)} unit="USDT" hint={t("companyStats.reversedCount", { n: e.reversed_count })} tone="neg" testid="stat-reversed" />
+          <Stat label={t("companyStats.reversedCommission")} value={fmt(e.reversed_commission_usdt)} unit="USDT" hint={t("companyStats.reversedCount", { n: e.reversed_count })} tone={e.reversed_commission_usdt > 0 ? "neg" : undefined} testid="stat-reversed" />
           <Stat label={t("companyStats.messagingOwn")} value={fmt(e.messaging_own_income_usdt)} unit="USDT" hint={t("companyStats.messagingOwnHint")} testid="stat-messaging-own" />
           <Stat label={t("companyStats.unattributed")} value={fmt(e.unattributed_commission_usdt)} unit="USDT" hint={t("companyStats.unattributedHint")} testid="stat-unattributed" />
         </div>
@@ -452,7 +452,7 @@ function CompaniesTab({ t, data, sort, setSort, onExport }) {
         <div className="flex items-center gap-2">
           <ExportButton t={t} onExport={onExport} />
           <Select value={sort} onValueChange={setSort}>
-          <SelectTrigger data-testid="company-stats-companies-sort" className="rounded-none bg-[#0c0c0c] border-white/10 h-9 w-48 text-sm">
+          <SelectTrigger data-testid="company-stats-companies-sort" className="rounded-none bg-[#0c0c0c] border-white/10 h-9 w-56 text-sm">
             <SelectValue />
           </SelectTrigger>
           <SelectContent className="bg-[#0c0c0c] border-white/10 rounded-none">

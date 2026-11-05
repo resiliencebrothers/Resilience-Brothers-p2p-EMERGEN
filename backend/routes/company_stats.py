@@ -574,8 +574,8 @@ async def company_stats_products(
         sort_field = {"quantity": "quantity", "gross": "gross_usdt",
                       "commission": "commission_usdt"}.get(sort, "commission_usdt")
     else:
-        # Servicios: comisión no atribuible → el único ranking posible es ventas.
-        sort_field = "gross_usdt"
+        # Servicios: la comisión no es atribuible; cantidad y ventas sí son calculables.
+        sort_field = {"quantity": "quantity", "gross": "gross_usdt"}.get(sort, "gross_usdt")
     out.sort(key=lambda x: x.get(sort_field) or 0, reverse=True)
     window = out[offset:offset + limit]
     return {

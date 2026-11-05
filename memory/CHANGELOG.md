@@ -1,3 +1,34 @@
+## Changelog — 5 Nov 2026 (Revisión Estadísticas de Empresas — EST-R01..R11 corregidos)
+
+Artefacto del usuario (`Revision_Estadisticas_Empresas_0008d0f5_05-11-2026.txt`): "corregir los errores encontrados" (dictamen: implementación parcial, no aprobar cierre). Se corrigieron los 11 hallazgos del módulo SOLO LECTURA `Fondo de empresa > Ingresos`. Backend reescrito (`routes/company_stats.py`), frontend parcheado (`pages/admin/revenue/CompanyStatsDialog.jsx`), i18n es/en.
+
+### Backend `routes/company_stats.py` (reescritura del núcleo)
+- **EST-R01 — reversiones por fecha efectiva**: cada canje aporta su comisión positiva en el bucket/ventana de `fund_inflow_at` y su reversión negativa en la ventana de `fund_inflow_reversed_at`. Comisión NETA = positivas − reversiones imputadas por su fecha. Corte point-in-time: una consulta de octubre NO resta una reversión de noviembre. Verificado (Oct +10/rev 0; Nov −10/rev 10; total 0/rev 10). Aplica a empresas, productos y tendencia (dos pases pos/neg mergeados por bucket).
+- **EST-R02 — entregas**: estados realizados = `delivered` + `confirmed` (antes solo `delivered`), alineado con `admin_revenue._compute_courier_revenue`. `$ifNull` prepara campos `_paid` (fee/plataforma/mensajero) aún inexistentes. Verificado: municipios/mensajería pasan de 65→69 realizadas.
+- **EST-R03 — totales completos**: se eliminó el tope de 5000; `to_list(None)` + paginación servidor (`offset`/`limit`, máx 500) en empresas/productos/municipios; respuestas incluyen `offset`/`total`.
+- **EST-R04 — comprobación de distribución**: `reconciliation.check_type="distribution"`; se compara `distributed` (empresas+sin atribuir) contra un total elegible INDEPENDIENTE (`_eligible_total`, group `_id:null`). `balanced` se basa en ese total. Redondeo consistente a 2 decimales. Metadato CSV "Generado (hora de generacion UTC)" (no es "corte"/instantánea).
+- **EST-R05 — alcance por empresa**: la comparativa de período anterior respeta `company_id`; mensajería/servicios se marcan `scope:"global"` cuando hay filtro (no se presentan como filtrados); la concentración se suprime (`null`) al filtrar a una sola empresa.
+- **EST-R07 — fechas robustas y zona de negocio**: `BUSINESS_TZ=America/Havana`. Fechas `YYYY-MM-DD` se interpretan como día de negocio → intervalo semiabierto [inicio, día siguiente) en UTC. Comparación con `$convert` a fecha real (tolera null/''/offset/fracción; dos instantes equivalentes con/sin microsegundos cuentan igual). `$dateTrunc`/`$dateToString` de la tendencia usan `timezone`. Valida desde≤hasta (400 si invierte).
+- **EST-R08 — fila "Sin atribuir"**: incluye el caso de solo reversiones (aparece aunque el neto sea 0) en summary, ranking y CSV.
+- **EST-R10 — unidad y clasificaciones**: productos exponen `unit`; servicios se ordenan por `quantity` o `gross` (la comisión no es atribuible → no ofertada). Guardia de moneda: comisiones en moneda ≠ USDT se excluyen (`$ifNull` currency→USDT). Verificado (999 EUR excluido).
+- **EST-R11 — tipos**: `mypy routes/company_stats.py` limpio; `ruff` limpio.
+- **Cobertura honesta**: notas ampliadas (zona de negocio, delivered+confirmed, ventana por `updated_at`, paginación del ranking; el drill-down por operación individual queda declarado pendiente).
+
+### Frontend `pages/admin/revenue/CompanyStatsDialog.jsx`
+- **EST-R07**: `computeRange` calcula hoy/mes en zona `America/Havana` vía `Intl` (independiente del dispositivo).
+- **EST-R06 (carrera)**: `loadSeqRef` descarta respuestas obsoletas y solo la última limpia el spinner. Verificado forzando 3s de retardo en "Todo" y cambiando Hoy→Todo→Mes→7d: el estado final (7d) no fue sobrescrito por datos viejos.
+- **EST-R04**: título "Comprobación de distribución"; pie de tabla muestra "—" en vez de 100% cuando el total es 0.
+- **EST-R08**: la fila "Sin atribuir" se muestra también cuando solo hay reversiones.
+- **EST-R10**: columna "Unidad" en productos; en Servicios la opción "comisión" no se oferta.
+- **Pulidos del testing agent (LOW)**: meta de cabecera con `pr-8` (no solapa la X); selector de orden de empresas `w-56` (no trunca); la tarjeta "Reversiones" solo en rojo si > 0.
+
+### Pruebas / verificación
+- Nuevas pruebas deterministas `tests/test_iter395_company_stats_review.py` (10) siembran sus propios documentos y los limpian: R01 (3), R03/R04, R10 (moneda+unidad), R08, R02 (confirmed), R07 (equivalencia de instantes), rango inválido 400. **33/33 verde** con iter392/393.
+- Testing agent (frontend only, `iteration_390.json`): 8/8 flujos PASS; read-only confirmado. Solo hallazgos LOW/cosméticos (ya resueltos o declarados).
+
+---
+
+
 ## Changelog — 5 Nov 2026 (Revisión Resilience_Clasificacion — 3 pendientes + groundwork tienda)
 
 Artefacto del usuario (`Resilience_Revision_Clasificacion_4c89249.txt`): "revisar si ya están corregidos". Los 3 pendientes seguían presentes; se corrigieron y verificaron. Además se dejó el groundwork del "identificador de tienda en la venta".

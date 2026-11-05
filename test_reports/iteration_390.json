@@ -1,0 +1,37 @@
+{
+  "summary": "Frontend-only test of CompanyStatsDialog (/admin/company-funds?tab=revenue -> open-company-stats), admin cookie test_session_admin_X, 1920x1080. All 8 requested flows PASS: dialog opens on Resumen, no 4xx/5xx on any company-stats call. EST-R07: default 'Mes en curso' = 2026-11-01..2026-11-05 (Havana today 5/11/2026); Hoy=11-05..11-05, Últimos 7 días=10-30..11-05, Todo=empty dates, and data updates (Todo net=89,232 USDT). EST-R06: forced the race by delaying the 'Todo' responses (no since) by 3s with page.route and switching Hoy->Todo->Mes en curso->7 días quickly. The final state was 7 días (10-30..11-05), the comparison window matched (10-23..10-29), the spinner cleared and the stale 'Todo' data was not applied. EST-R04: 'COMPROBACIÓN DE DISTRIBUCIÓN' shows 0 (Empresas) + 89,232 (sin atribuir) = 89,232 USDT with CUADRA. EST-R08: with Todo the Empresas tab shows the 'Sin atribuir' row (89,232 / 90,632 / 169 ops / -1,400 (14) / 100%) and a matching TOTAL. EST-R10: the Productos table has a UNIDAD column with value 'unidad'. In Servicios the sort trigger auto-shows 'Ordenar por ventas brutas' and the options are only cantidad and ventas brutas (no comisión). CSV export downloads OK: empresas_*.csv, products_*.csv, services_*.csv, municipios_*.csv. Mensajería shows 69 entregas, recaudación 150, parte propia 4. Read-only: the dialog's only buttons are tabs, Exportar CSV, period select and Close.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ProductsTab (Servicios)", "issue": "'Ordenar por cantidad' is offered for services, but the backend /products always sorts services by gross_usdt (company_stats.py ~L576-578), so picking it changes nothing. Either drop the option for services or support quantity sorting in the backend. Also, prodSort state stays 'commission' while the UI shows 'gross' (only the displayed value is coerced).", "selector": "[data-testid='company-stats-products-sort']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CompanyStatsDialog header", "issues": [
+        "The top-right 'USDT · Actualizado' text sits under or overlaps the dialog close (X) button.",
+        "Desde/Hasta use the browser's native input type=date instead of the shadcn Calendar/Popover.",
+        "The companies sort trigger (w-48) cuts off its label: 'Ordenar por comisión ne…'.",
+        "The 'Reversiones de comisión' stat is always red, even when the value is 0."
+      ]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Remove the 'cantidad' sort for services or implement it in the backend",
+    "Add right padding to the header meta block so it doesn't overlap the close X",
+    "Widen the companies sort SelectTrigger",
+    "Optional: replace the native date inputs with the shadcn Calendar"
+  ],
+  "critical_code_review_comments": [
+    "CompanyStatsDialog.jsx has 661 lines, close to the 700-line limit; consider splitting the tabs into separate files.",
+    "load() fires 5 requests on every filter change, including tab-specific sort/kind changes (for example, changing the product sort refetches summary and trend). Consider fetching per tab.",
+    "downloadCsv has no loading or disabled state, so double clicks start duplicate downloads.",
+    "computeRange('7d') does the 6-day subtraction in device-local time before converting to the Havana day; fine in practice, with an edge risk at DST changes."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped (frontend only)", "frontend": "100% of requested flows (8/8)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth: add the session_token=test_session_admin_X cookie for the preview domain. Open the dialog via [data-testid=open-company-stats]. Period select: [data-testid=company-stats-quick], options in role=option. The race was reproduced with page.route delaying requests without 'since' (you need to import asyncio in the script). All historical data is 'Sin atribuir', which is expected."
+}
