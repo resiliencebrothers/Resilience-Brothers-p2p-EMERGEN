@@ -2,11 +2,13 @@
 
 Antes `_fetch_conversions` leía 5.000 por fuente SIN orden y filtraba la moneda
 en memoria: con >5.000 operaciones podía descartar conversiones recientes o de
-la moneda buscada. Ahora el filtro de moneda va EN LA BASE DE DATOS y cada
-fuente se lee ordenada por fecha desc antes del límite.
+la moneda buscada, y además corromper el total (la ruta cuenta/pagina sobre el
+conjunto completo). Ahora el filtro de moneda va EN LA BASE DE DATOS y cada
+fuente se lee ordenada por fecha desc SIN tope (`to_list(None)`).
 
-Caso: 5.016 conversiones USDT→CUP (recientes) + 4 ZZZT→USDT (antiguas). Buscar
-'ZZZT' debe devolver las 4 aunque queden "detrás" de 5.000 operaciones nuevas.
+Casos: (1) 5.016 USDT→CUP + 4 ZZZT→USDT: buscar 'ZZZT' devuelve las 4 pese a
+quedar "detrás" de 5.016 operaciones. (2) buscar 'USDT' devuelve las 5.020
+coincidentes marcadas (5.016 + 4), reproduciendo el reporte "5.001 → 5.000".
 """
 import asyncio
 import os
@@ -56,8 +58,18 @@ def test_rare_currency_not_dropped_beyond_cap():
     assert all(it.get("to_code") != "CUP" for it in zzzt)
 
 
+def test_over_5000_matches_returns_all():
+    # Reproduce el reporte: con >5.000 coincidencias el tope de 5.000 descartaba
+    # la(s) más antigua(s). Sin tope, las 5.020 marcadas (5.016 from=USDT +
+    # 4 to=USDT) deben volver completas.
+    items = asyncio.run(_fetch_conversions({}, "USDT", None))
+    mine = [it for it in items if it.get("ref_id", "").startswith(MARK)]
+    assert len(mine) == 5020, f"esperaba 5020 marcadas, obtuve {len(mine)}"
+
+
 def test_results_sorted_desc_by_date():
     items = asyncio.run(_fetch_conversions({}, "USDT", None))
     mine = [it.get("created_at", "") for it in items
             if it.get("ref_id", "").startswith(MARK)]
     assert mine == sorted(mine, reverse=True)
+

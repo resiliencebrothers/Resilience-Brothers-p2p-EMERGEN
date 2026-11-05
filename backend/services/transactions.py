@@ -20,10 +20,6 @@ from db_client import db
 # the client history render a dedicated badge/tab.
 SMALL_BALANCE_THRESHOLD_USDT = 5.0
 
-# Tope por fuente al leer conversiones. Con orden estable (created_at desc) y
-# filtro de moneda en BD, conserva las conversiones MÁS RECIENTES ya relevantes.
-_CONVERSION_FETCH_CAP = 5000
-
 
 # Public alias — every entry in the unified transactions list shares this shape.
 TransactionItem = Dict[str, Any]
@@ -388,11 +384,12 @@ async def _fetch_conversions(
     SOLO LECTURA: las conversiones nunca suman a in/out ni generan un segundo
     crédito (ver compute_transaction_totals).
 
-    Historiales grandes: la moneda se filtra EN LA BASE DE DATOS y cada fuente
-    se lee ORDENADA por fecha descendente antes del límite, de modo que el tope
-    por fuente conserva las conversiones MÁS RECIENTES ya filtradas por moneda
-    (antes se leían 5.000 sin orden y se filtraba la moneda en memoria, lo que
-    podía descartar conversiones recientes o de la moneda buscada)."""
+    Historiales grandes: la moneda (y el titular) se filtran EN LA BASE DE DATOS
+    y cada fuente se lee ORDENADA por fecha descendente SIN tope (`to_list(None)`),
+    para no descartar silenciosamente coincidencias. Antes se leían 5.000 sin
+    orden y se filtraba la moneda en memoria, de modo que con >5.000 coincidencias
+    se perdían operaciones (la 5.001 USDT no aparecía); la ruta cuenta y pagina
+    sobre el conjunto completo, así que el tope corrompía también el total."""
     cu = currency.upper() if currency else None
     durable_q: dict = {"status": "applied", **date_q}
     audit_q: dict = {
@@ -418,11 +415,11 @@ async def _fetch_conversions(
     if audit_and:
         audit_q["$and"] = audit_and
     durable = await db.conversions.find(
-        durable_q, {"_id": 0}).sort("created_at", -1).to_list(_CONVERSION_FETCH_CAP)
+        durable_q, {"_id": 0}).sort("created_at", -1).to_list(length=None)
     durable_ids = {c.get("id") for c in durable}
     items = [_durable_conversion_to_transaction(c) for c in durable]
     rows = await db.audit_log.find(
-        audit_q, {"_id": 0}).sort("created_at", -1).to_list(_CONVERSION_FETCH_CAP)
+        audit_q, {"_id": 0}).sort("created_at", -1).to_list(length=None)
     for r in rows:
         cid = (r.get("details") or {}).get("conversion_id")
         if cid and cid in durable_ids:
