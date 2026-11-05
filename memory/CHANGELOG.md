@@ -1,3 +1,28 @@
+## Changelog — 5 Nov 2026 (Revisión Resilience_Clasificacion — 3 pendientes + groundwork tienda)
+
+Artefacto del usuario (`Resilience_Revision_Clasificacion_4c89249.txt`): "revisar si ya están corregidos". Los 3 pendientes seguían presentes; se corrigieron y verificaron. Además se dejó el groundwork del "identificador de tienda en la venta".
+
+### #1 (RESUELTO) — Conversiones internas ausentes del historial administrativo
+- **Backend** `services/transactions.py`: `_fetch_conversions()` ya no exige `user_id`. Con `user_id=None` (registro ADMIN) incorpora las conversiones (`vip.convert`/durables `db.conversions` + audit_log deduplicado) de TODOS los clientes; nuevo parámetro `holder` para filtrar por nombre/correo. `build_transactions()` llama a conversiones también en scope admin. SOLO LECTURA: `compute_transaction_totals` las cuenta en `conversion_count` y NUNCA las suma a in/out (no hay segundo crédito). El registro personal `/me/transactions` sigue acotado por usuario.
+- **Frontend** `pages/admin/transactions/`: `originMeta.js` añade el origen `conversion` (sin ruta operable → sin navegación) y el filtro `conversions`; `routeForTx` ahora devuelve `null` cuando no hay destino. `TransactionsTable.jsx` muestra el chip amarillo «Conversión» (icono Repeat) y oculta «Ver origen» cuando no hay ruta. `TransactionDetailModal.jsx` muestra el chip de conversión, un bloque «Detalle de la conversión» (Convierte/Recibe/Tasa/Comisión) y oculta el botón «Ir a…» para conversiones. i18n es/en (`originFilter.conversions`, `originExplainer.conversion`, `idLabel.conversion`, `conversionShort`, `conv*`).
+- **Verificado** e2e: filtro de origen muestra las conversiones (cliente/moneda/importe/tasa/ref); modal con bloque de conversión y sin botón de navegación; CSV (con BOM) y PDF (34 págs) exportan conversiones sin romperse; totales con `conversion_count=664` y `by_currency` sin clave `conversion`.
+
+### #2 (RESUELTO) — Aviso repetido de "depósito no encontrado"
+- `pages/admin/vip/AdminDeposits.jsx`: nuevo `focusLookupRef` — el fetch por ID de un `?focus=` que no está en la lista se intenta UNA vez por id; un 404 avisa una sola vez y no se repite aunque cambien `items`/`loading` (antes el efecto se re-disparaba en cada refresco). Un error transitorio (red/servidor) sí permite reintento; el reintento "real" ocurre al cambiar el id del enlace. **Verificado**: contador de respuestas → 1 llamada tras la carga y 1 tras forzar un re-render.
+
+### #3 (RESUELTO) — Foco de Depósitos desincronizado con la URL
+- Mismo archivo: nuevo efecto que resincroniza `focusActive` cuando cambia `?focus=` (enlace nuevo o limpiado) SIN desmontar el componente; no se dispara por cambios internos (filtros) porque `focusId` no cambia, preservando la salida manual del foco. Limpia `focusLookupRef` al cambiar de id para permitir buscar el nuevo.
+
+### Groundwork — "identificador de tienda en la venta" (Next Action Item previo)
+- `routes/orders.py`: la venta (`/vip/redeem`) ahora captura el ORIGEN honesto en cada `redemption`: `sale_origin_kind` (branch|central|vendor|platform) + `sale_origin_id` + `sale_origin_name` vía `_resolve_sale_origin()`. Recogida→sucursal; entrega de Empresa→almacén central de esa Empresa; producto VIP→vendedor; propio→«Almacén propio». No inventa sucursal para entregas. Habilita el futuro desglose por tienda sin tocar la contabilidad.
+
+### Pruebas
+- Nuevo `tests/test_iter394_admin_conversions.py` **8/8**: anónimo 401, conversiones en registro admin, totales sin contaminar in/out, filtro holder, admin ≥ personal, filtros in/out excluyen conversiones, y 4 ramas del resolutor de origen de venta.
+- Regresión: `test_iter78_conversions_in_history.py` 4/4 (personal intacto); `test_transactions_registry.py` + `test_iter55_order_outflows.py` pasan. `ruff` limpio; i18n es/en con paridad; frontend compila (solo warnings preexistentes). NOTA: 2 fallos preexistentes en `test_iter285_pay_now_marketplace.py` por staleness (el canje ahora exige teléfono válido — validación previa a mi código, no relacionada).
+
+---
+
+
 ## Changelog — 5 Nov 2026 (Estadísticas de empresas — FASE 2: análisis y exportación)
 
 Segunda fase del plan "Estadísticas de empresas (Fondo de empresa > Ingresos)". Módulo sigue siendo de SOLO LECTURA. Backend en `routes/company_stats.py`, frontend en `revenue/CompanyStatsDialog.jsx`.

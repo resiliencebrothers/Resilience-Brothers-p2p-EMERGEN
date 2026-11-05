@@ -29,6 +29,12 @@ export const ORIGIN = {
     route: "/admin/vip-batches", go: "vip", idKey: "batch",
     cls: "text-sky-400 border-sky-500/40 bg-sky-500/10",
   },
+  // Conversión de saldo (vip.convert): evento informativo entre los saldos
+  // del propio cliente. No nace en ningún módulo operable → sin navegación.
+  conversion: {
+    route: null, go: null, idKey: "conversion",
+    cls: "text-yellow-400 border-yellow-500/40 bg-yellow-500/10",
+  },
 };
 
 export const FALLBACK_ORIGIN = {
@@ -42,6 +48,7 @@ export const originOf = (refType) => ORIGIN[refType] || FALLBACK_ORIGIN;
 // parámetro `focus` que la página destino usa para resaltar la fila.
 export const routeForTx = (tx) => {
   const base = originOf(tx?.ref_type).route;
+  if (!base) return null;
   if (!tx?.ref_id) return base;
   const sep = base.includes("?") ? "&" : "?";
   return `${base}${sep}focus=${encodeURIComponent(tx.ref_id)}`;
@@ -55,4 +62,5 @@ export const ORIGIN_FILTERS = {
   withdrawals: "withdrawal",
   company: "company_adjustment,company_withdrawal",
   vip: "vip_batch_item",
+  conversions: "conversion",
 };

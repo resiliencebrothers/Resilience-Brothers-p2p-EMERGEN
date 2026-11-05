@@ -2506,7 +2506,8 @@
         "withdrawal": "Nació en Depósitos y Retiros: el cliente retiró saldo de la plataforma.",
         "company_adjustment": "Movimiento manual de capital registrado en Fondos de la empresa.",
         "company_withdrawal": "Retiro del fondo de la empresa (proveedor, socio, gasto).",
-        "vip_batch_item": "Entrada aprobada dentro de un lote VIP."
+        "vip_batch_item": "Entrada aprobada dentro de un lote VIP.",
+        "conversion": "Conversión de saldo del cliente (Cambiar entre sus propias monedas). No altera el total de la cartera salvo la comisión; no pasa por ningún módulo operable."
       },
       "originFilter": {
         "all": "Todos los orígenes",
@@ -2514,7 +2515,8 @@
         "deposits": "Depósitos de saldo",
         "withdrawals": "Retiros de saldo",
         "company": "Fondos empresa",
-        "vip": "Lotes VIP"
+        "vip": "Lotes VIP",
+        "conversions": "Conversiones de saldo"
       },
       "idLabel": {
         "order": "ID Orden",
@@ -2522,7 +2524,8 @@
         "withdrawal": "ID Retiro",
         "movement": "ID Movimiento",
         "batch": "ID Lote",
-        "ref": "Referencia"
+        "ref": "Referencia",
+        "conversion": "ID Conversión"
       },
       "goTo": {
         "orders": "Ir a Órdenes",
@@ -2580,6 +2583,12 @@
       "colStatus": "Estado",
       "colRef": "Ref",
       "viewSource": "Ver origen",
+      "conversionShort": "Conversión",
+      "conversionDetail": "Detalle de la conversión",
+      "convFrom": "Convierte",
+      "convTo": "Recibe",
+      "convRate": "Tasa aplicada",
+      "convFee": "Comisión",
       "loading": "Cargando...",
       "empty": "Sin transacciones que mostrar",
       "sendData": "Datos del envío",

@@ -139,6 +139,13 @@ class Redemption(BaseModel):
     on_my_way_at: str = ""
     # iter238 — código corto que el cliente muestra en la tienda.
     pickup_code: str = ""
+    # Desglose por tienda/almacén — snapshot del ORIGEN de la venta al comprar,
+    # para habilitar el reporte "ventas por tienda" sin inventar atribución.
+    # branch = sucursal (recogida); central = almacén central de la Empresa;
+    # vendor = vendedor VIP; platform = inventario propio. Vacío = venta antigua.
+    sale_origin_kind: str = ""
+    sale_origin_id: str = ""
+    sale_origin_name: str = ""
 
 
 class RedemptionCreate(BaseModel):
@@ -411,6 +418,30 @@ async def _load_pickup_store(store_id: Optional[str], product: dict) -> dict:
             status_code=400,
             detail="Este producto no está disponible en esa sucursal")
     return store
+
+
+def _resolve_sale_origin(product: dict, pickup_store: Optional[dict],
+                         fulfillment: str) -> tuple[str, str, str]:
+    """Snapshot del ORIGEN de la venta para habilitar el desglose por tienda.
+
+    Devuelve (kind, id, name):
+    - branch   → recogida en una sucursal física (id/nombre de la tienda).
+    - central  → producto de Empresa entregado desde su almacén central.
+    - vendor   → producto de un vendedor VIP (owner_id sin company_id).
+    - platform → inventario propio de la plataforma.
+    Honesto: no inventa una sucursal para las entregas a domicilio; usa el
+    almacén central real de la Empresa como origen de esas ventas."""
+    if fulfillment == "store_pickup" and pickup_store:
+        return "branch", pickup_store.get("id") or "", pickup_store.get("name") or ""
+    owner_name = (product.get("owner_name") or "").strip()
+    company_id = product.get("company_id") or ""
+    if company_id:
+        name = f"{owner_name} · Almacén central" if owner_name else "Almacén central"
+        return "central", company_id, name
+    owner_id = product.get("owner_id") or ""
+    if owner_id:
+        return "vendor", owner_id, owner_name or "Vendedor VIP"
+    return "platform", "", "Almacén propio"
 
 
 async def _compute_product_pricing(product: dict, quantity: float,
@@ -732,6 +763,8 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
             {"id": "global"}, {"_id": 0, "vendor_commission_pct": 1}) or {}
         _rpct = _rdoc.get("vendor_commission_pct")
         reserve_pct_snap = float(_rpct) if _rpct is not None else 1.0
+    _origin_kind, _origin_id, _origin_name = _resolve_sale_origin(
+        product, pickup_store, payload.fulfillment)
     r = Redemption(
         user_id=user["user_id"],
         user_email=user["email"],
@@ -776,6 +809,9 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         store_address=(pickup_store or {}).get("address") or "",
         pickup_code=(await _new_pickup_code()) if pickup_store else "",
         settlement_currency="USDT",
+        sale_origin_kind=_origin_kind,
+        sale_origin_id=_origin_id,
+        sale_origin_name=_origin_name,
     )
     # iter254(R03) — protocolo reserva/operación/activación recuperable:
     # 1) doc en 'initializing' con los op_ids del intento; 2) reserva de stock

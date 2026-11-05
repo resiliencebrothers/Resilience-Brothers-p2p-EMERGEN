@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
 import { extractCryptoNetwork } from "@/services/delivery_validators";
-import { ArrowDown, ArrowUp, Download, Receipt, X, ExternalLink, Landmark, Wallet, AlertTriangle, ShieldCheck } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, Receipt, X, ExternalLink, Landmark, Wallet, AlertTriangle, ShieldCheck, Repeat } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { OriginBadge } from "./OriginBadge";
 import { originOf } from "./originMeta";
@@ -176,6 +176,10 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
               <span className="ml-2 text-[#22C55E] text-xs font-bold uppercase flex items-center gap-1">
                 <ArrowDown className="w-3 h-3" /> {t("admin.transactions.in")}
               </span>
+            ) : selected.direction === "conversion" ? (
+              <span className="ml-2 text-yellow-400 text-xs font-bold uppercase flex items-center gap-1">
+                <Repeat className="w-3 h-3" /> {t("admin.transactions.conversionShort")}
+              </span>
             ) : (
               <span className="ml-2 text-[#EF4444] text-xs font-bold uppercase flex items-center gap-1">
                 <ArrowUp className="w-3 h-3" /> {t("admin.transactions.out")}
@@ -241,9 +245,35 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
             </div>
           </div>
 
+          {selected.direction === "conversion" && (
+            <div className="border border-yellow-500/20 p-4 bg-yellow-500/5 space-y-2" data-testid="tx-conversion-block">
+              <div className="micro-label text-yellow-500/80 flex items-center gap-1.5">
+                <Repeat className="w-3 h-3" /> {t("admin.transactions.conversionDetail")}
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("admin.transactions.convFrom")}</div>
+                  <div className="font-mono" data-testid="tx-conv-from">{(selected.amount_from || 0).toLocaleString()} {selected.from_code}</div>
+                </div>
+                <div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("admin.transactions.convTo")}</div>
+                  <div className="font-mono text-emerald-400" data-testid="tx-conv-to">{(selected.amount_to || 0).toLocaleString()} {selected.to_code}</div>
+                </div>
+                <div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("admin.transactions.convRate")}</div>
+                  <div className="font-mono text-xs">{selected.rate}</div>
+                </div>
+                <div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("admin.transactions.convFee")}</div>
+                  <div className="font-mono text-xs">{(selected.usdt_fee || 0).toLocaleString()} USDT</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <AccountAndCreditBlock selected={selected} t={t} />
 
-          {selected.delivery_details && (
+          {selected.delivery_details && selected.direction !== "conversion" && (
             <div className="border border-white/5 p-4 bg-[#0a0a0a]">
               <div className="micro-label text-neutral-500 mb-2 flex items-center justify-between gap-2">
                 <span>
@@ -379,14 +409,16 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
           )}
 
           <div className="pt-2 flex justify-end">
-            <Button
-              data-testid="tx-modal-goto-source"
-              onClick={() => onNavigate(selected)}
-              className="rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white font-bold h-10 px-4 text-xs uppercase tracking-wider"
-            >
-              <ExternalLink className="w-3.5 h-3.5 mr-2" />
-              {t(`admin.transactions.goTo.${origin.go}`)}
-            </Button>
+            {origin.route && (
+              <Button
+                data-testid="tx-modal-goto-source"
+                onClick={() => onNavigate(selected)}
+                className="rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white font-bold h-10 px-4 text-xs uppercase tracking-wider"
+              >
+                <ExternalLink className="w-3.5 h-3.5 mr-2" />
+                {t(`admin.transactions.goTo.${origin.go}`)}
+              </Button>
+            )}
           </div>
         </div>
       </DialogContent>

@@ -37,11 +37,28 @@ export default function AdminDeposits({ onChanged }) {
   const [assigning, setAssigning] = useState(null);
   const abortRef = useRef(null);
   const initialLoadRef = useRef(true);
+  // #2 — id ya consultado por ID (en curso, resuelto o 404) para NO repetir el
+  // fetch ni el aviso cuando cambian `items`/`loading`. #3 — rastrea el focus
+  // previo para resincronizar focusActive cuando cambia el enlace.
+  const focusLookupRef = useRef(null);
+  const prevFocusRef = useRef(focusId);
 
   useEffect(() => {
     const id = setTimeout(() => setUserQuery(userInput.trim()), 300);
     return () => clearTimeout(id);
   }, [userInput]);
+
+  // #3 — mantener focusActive en sync con ?focus= de la URL: si el enlace
+  // cambia a un id distinto (o se limpia) SIN desmontar el componente, se
+  // reactiva/desactiva el foco. No se dispara por cambios internos (filtros)
+  // porque focusId no cambia; preserva la salida manual del foco.
+  useEffect(() => {
+    if (focusId !== prevFocusRef.current) {
+      prevFocusRef.current = focusId;
+      setFocusActive(!!focusId);
+      focusLookupRef.current = null; // nuevo id → permite buscarlo por ID
+    }
+  }, [focusId]);
 
   const load = useCallback(async () => {
     if (abortRef.current) {
@@ -86,6 +103,10 @@ export default function AdminDeposits({ onChanged }) {
   useEffect(() => {
     if (!focusId || loading) return undefined;
     if (items.some((d) => d.id === focusId)) return undefined;
+    // #2 — ya se intentó por ID para este focus (en curso, resuelto o 404): no
+    // repetir la consulta ni el aviso aunque `items`/`loading` vuelvan a cambiar.
+    if (focusLookupRef.current === focusId) return undefined;
+    focusLookupRef.current = focusId;
     let cancelled = false;
     axios.get(`${API}/admin/deposits/${focusId}`, { withCredentials: true })
       .then((r) => {
@@ -94,7 +115,14 @@ export default function AdminDeposits({ onChanged }) {
       })
       .catch((err) => {
         if (cancelled) return;
-        if (err?.response?.status === 404) toast.error(t("adminDeposits.focusNotFound"));
+        if (err?.response?.status === 404) {
+          // No encontrado / fuera de alcance: se avisa UNA vez. El reintento
+          // solo ocurre si cambia el id del enlace (focusLookupRef se limpia).
+          toast.error(t("adminDeposits.focusNotFound"));
+        } else {
+          // Error transitorio (red/servidor): permite reintentar en el próximo ciclo.
+          focusLookupRef.current = null;
+        }
       });
     return () => { cancelled = true; };
   }, [focusId, loading, items, t]);

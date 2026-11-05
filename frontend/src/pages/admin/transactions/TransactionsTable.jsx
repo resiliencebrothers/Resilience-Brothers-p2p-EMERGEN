@@ -1,6 +1,7 @@
-import { ArrowDown, ArrowUp, ArrowUpRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpRight, Repeat } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { OriginBadge } from "./OriginBadge";
+import { routeForTx } from "./originMeta";
 
 export function TransactionsTable({ items, loading, onRowClick, onGoToSource }) {
   const { t } = useTranslation();
@@ -54,6 +55,10 @@ export function TransactionsTable({ items, loading, onRowClick, onGoToSource }) 
                     <span className="inline-flex items-center gap-1 text-[#22C55E] text-xs font-bold uppercase">
                       <ArrowDown className="w-3 h-3" /> {tx("in")}
                     </span>
+                  ) : it.direction === "conversion" ? (
+                    <span className="inline-flex items-center gap-1 text-yellow-400 text-xs font-bold uppercase">
+                      <Repeat className="w-3 h-3" /> {tx("conversionShort")}
+                    </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 text-[#EF4444] text-xs font-bold uppercase">
                       <ArrowUp className="w-3 h-3" /> {tx("out")}
@@ -83,7 +88,7 @@ export function TransactionsTable({ items, loading, onRowClick, onGoToSource }) 
                 <td className="px-3 py-2 font-mono text-xs text-neutral-600">
                   <div className="flex items-center gap-2">
                     <span>{it.ref_id?.slice(0, 6)}</span>
-                    {it.ref_id ? (
+                    {it.ref_id && routeForTx(it) ? (
                       <button
                         type="button"
                         data-testid={`tx-view-source-${it.ref_id}`}

@@ -369,29 +369,37 @@ def _durable_conversion_to_transaction(c: dict) -> TransactionItem:
 
 async def _fetch_conversions(
     date_q: dict, currency: Optional[str], user_id: Optional[str],
+    holder: Optional[str] = None,
 ) -> List[TransactionItem]:
-    """iter78/iter79 — historial de conversiones del usuario.
+    """iter78/iter79 — historial de conversiones (`vip.convert`).
 
     FX09 — la fuente PRIMARIA es el registro financiero durable
     `db.conversions` (existe aunque el log opcional haya fallado). Las filas
     de audit_log se conservan para las conversiones anteriores al registro
     durable y se deduplican por `details.conversion_id`.
 
-    `user_id` is REQUIRED — admin-scope calls don't get conversions
-    (they are personal balance movements, not company events)."""
-    if not user_id:
-        return []
-    durable = await db.conversions.find(
-        {"user_id": user_id, "status": "applied", **date_q},
-        {"_id": 0}).to_list(5000)
-    durable_ids = {c.get("id") for c in durable}
-    items = [_durable_conversion_to_transaction(c) for c in durable]
-    q: dict = {
+    `user_id` OPCIONAL: si viene, limita a ese cliente (registro personal);
+    si es None (registro ADMIN) incorpora las conversiones de TODOS los
+    clientes. `holder` filtra por nombre/correo del cliente (solo admin).
+    SOLO LECTURA: las conversiones nunca suman a in/out ni generan un segundo
+    crédito (ver compute_transaction_totals)."""
+    durable_q: dict = {"status": "applied", **date_q}
+    audit_q: dict = {
         "action": {"$in": ["vip.convert", "vip.convert.dust"]},
-        "actor_id": user_id,
         **date_q,
     }
-    rows = await db.audit_log.find(q, {"_id": 0}).to_list(5000)
+    if user_id:
+        durable_q["user_id"] = user_id
+        audit_q["actor_id"] = user_id
+    if holder:
+        rx = {"$regex": re.escape(holder), "$options": "i"}
+        durable_q["$or"] = [{"user_name": rx}, {"user_email": rx}]
+        audit_q["$or"] = [{"actor_name": rx}, {"actor_email": rx}]
+    durable = await db.conversions.find(
+        durable_q, {"_id": 0}).to_list(5000)
+    durable_ids = {c.get("id") for c in durable}
+    items = [_durable_conversion_to_transaction(c) for c in durable]
+    rows = await db.audit_log.find(audit_q, {"_id": 0}).to_list(5000)
     for r in rows:
         cid = (r.get("details") or {}).get("conversion_id")
         if cid and cid in durable_ids:
@@ -713,12 +721,13 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
             items.extend(await _fetch_salidas_withdrawals(date_q, currency, holder, user_id))
         items.extend(await _fetch_salidas_order_payouts(date_q, currency, holder, user_id))
 
-    # iter78 — Personal self-conversions (`vip.convert`). Only surfaced on
-    # the user-scoped ledger (holder filter n/a — a conversion is between the
-    # user's own balances). Included whenever the caller is not exclusively
-    # asking for `in` or `out`.
-    if direction in (None, "all", "conversion") and user_id:
-        items.extend(await _fetch_conversions(date_q, currency, user_id))
+    # iter78 — Conversiones personales (`vip.convert`). Se incluyen siempre que
+    # el llamador no pida exclusivamente `in` u `out`. En el registro PERSONAL
+    # (user_id) muestran las del propio cliente; en el registro ADMIN
+    # (user_id=None) incorporan las de TODOS los clientes, filtrables por
+    # `holder`. Nunca tocan los totales in/out ni generan un segundo crédito.
+    if direction in (None, "all", "conversion"):
+        items.extend(await _fetch_conversions(date_q, currency, user_id, holder))
 
     # iter55.15 — Company-level capital events (aportes propios + retiros del
     # fondo). Only included in the ADMIN transactions register (no user_id

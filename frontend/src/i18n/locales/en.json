@@ -2506,7 +2506,8 @@
         "withdrawal": "Born in Deposits & Withdrawals: the client withdrew balance from the platform.",
         "company_adjustment": "Manual capital movement recorded in Company Funds.",
         "company_withdrawal": "Withdrawal from the company fund (supplier, partner, expense).",
-        "vip_batch_item": "Approved inflow inside a VIP batch."
+        "vip_batch_item": "Approved inflow inside a VIP batch.",
+        "conversion": "Client balance conversion (Exchange between their own currencies). It doesn't change the wallet total beyond the fee; it goes through no operable module."
       },
       "originFilter": {
         "all": "All origins",
@@ -2514,7 +2515,8 @@
         "deposits": "Balance deposits",
         "withdrawals": "Balance withdrawals",
         "company": "Company funds",
-        "vip": "VIP batches"
+        "vip": "VIP batches",
+        "conversions": "Balance conversions"
       },
       "idLabel": {
         "order": "Order ID",
@@ -2522,7 +2524,8 @@
         "withdrawal": "Withdrawal ID",
         "movement": "Movement ID",
         "batch": "Batch ID",
-        "ref": "Reference"
+        "ref": "Reference",
+        "conversion": "Conversion ID"
       },
       "goTo": {
         "orders": "Go to Orders",
@@ -2580,6 +2583,12 @@
       "colStatus": "Status",
       "colRef": "Ref",
       "viewSource": "View source",
+      "conversionShort": "Conversion",
+      "conversionDetail": "Conversion detail",
+      "convFrom": "Converts",
+      "convTo": "Receives",
+      "convRate": "Applied rate",
+      "convFee": "Fee",
       "loading": "Loading...",
       "empty": "No transactions to show",
       "sendData": "Sender details",
