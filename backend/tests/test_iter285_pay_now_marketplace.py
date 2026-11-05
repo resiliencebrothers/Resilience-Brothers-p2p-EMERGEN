@@ -39,6 +39,37 @@ def _iso(minutes_ago=0):
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
 
 
+def _valid_delivery_fields(token, product_id, quantity):
+    """MUNI-02-R/06-R — el canje a domicilio exige dirección, teléfono válido,
+    municipio ACTIVO y el importe de mensajería confirmado. Se resuelven contra
+    la API real: municipio activo + cotización para el total del pedido."""
+    addr = f"Calle {MARK} #123 e/ A y B, apto 4"
+    rates = requests.get(f"{API}/courier/municipality-rates",
+                         headers=_hdr(token), timeout=30).json()
+    assert rates, "no hay municipios activos con cobertura"
+    rate = rates[0]
+    q = requests.get(f"{API}/vip/redeem-quote",
+                     params={"product_id": product_id, "quantity": quantity},
+                     headers=_hdr(token), timeout=30).json()
+    total = float(q["total_usdt"])
+    mq = requests.get(f"{API}/vip/courier-municipality-quote",
+                      params={"address": addr, "currency": "USDT",
+                              "amount": total, "municipality": rate["id"],
+                              "province": rate["province"]},
+                      headers=_hdr(token), timeout=30).json()
+    assert mq.get("matched"), mq
+    expected = 0.0 if mq.get("free") else float(mq["fee_usdt"])
+    return {
+        "delivery_address": addr,
+        "receiver_name": f"Receptor {MARK}",
+        "receiver_phone": "+53 55555555",
+        "courier_municipality": rate["id"],
+        "courier_province": rate["province"],
+        "expected_courier_fee_usdt": expected,
+    }
+
+
+
 def _cleanup():
     db = _db()
     acc_ids = [a["id"] for a in db.fund_accounts.find(
@@ -295,7 +326,7 @@ class TestMarketplaceNormalClients:
         r = requests.post(
             f"{API}/vip/redeem", headers=_hdr(NORMAL_TOKEN),
             json={"product_id": prod["id"], "quantity": 2,
-                  "delivery_address": f"Direccion {MARK} sin referencia"})
+                  **_valid_delivery_fields(NORMAL_TOKEN, prod["id"], 2)})
         assert r.status_code == 200, r.text
         red = r.json()
         assert red["user_id"] == "user_test_normal01"
@@ -317,7 +348,7 @@ class TestMarketplaceNormalClients:
         r = requests.post(
             f"{API}/vip/redeem", headers=_hdr(NORMAL_TOKEN),
             json={"product_id": prod["id"], "quantity": 1,
-                  "delivery_address": f"Direccion {MARK} sin referencia"})
+                  **_valid_delivery_fields(NORMAL_TOKEN, prod["id"], 1)})
         assert r.status_code == 400, r.text
         assert "insuficiente" in r.json()["detail"].lower()
 

@@ -18,7 +18,7 @@ Artefacto del usuario (`Resilience_Revision_Clasificacion_4c89249.txt`): "revisa
 
 ### Pruebas
 - Nuevo `tests/test_iter394_admin_conversions.py` **8/8**: anónimo 401, conversiones en registro admin, totales sin contaminar in/out, filtro holder, admin ≥ personal, filtros in/out excluyen conversiones, y 4 ramas del resolutor de origen de venta.
-- Regresión: `test_iter78_conversions_in_history.py` 4/4 (personal intacto); `test_transactions_registry.py` + `test_iter55_order_outflows.py` pasan. `ruff` limpio; i18n es/en con paridad; frontend compila (solo warnings preexistentes). NOTA: 2 fallos preexistentes en `test_iter285_pay_now_marketplace.py` por staleness (el canje ahora exige teléfono válido — validación previa a mi código, no relacionada).
+- Regresión: `test_iter78_conversions_in_history.py` 4/4 (personal intacto); `test_transactions_registry.py` + `test_iter55_order_outflows.py` pasan. `ruff` limpio; i18n es/en con paridad; frontend compila (solo warnings preexistentes). **`test_iter285_pay_now_marketplace.py` 8/8** tras actualizar los canjes de clientes con teléfono + municipio válidos (nuevo helper `_valid_delivery_fields` que resuelve municipio activo y el importe de mensajería contra la API; eran 2 fallos por staleness del contrato MUNI-02-R/06-R, ajenos a estos cambios).
 
 ---
 
